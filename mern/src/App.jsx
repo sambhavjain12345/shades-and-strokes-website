@@ -7,6 +7,7 @@ import Shop             from './pages/Shop';
 import { ProductDetail } from './pages/ProductDetail';
 import Login            from './pages/Login';
 import Admin            from './pages/Admin';
+import Checkout         from './pages/Checkout';
 import ArtistDashboard  from './pages/ArtistDashboard';
 import { Cart, Wishlist, Orders, Profile } from './pages/OtherPages';
 
@@ -30,6 +31,7 @@ function AppRoutes() {
 
       {/* Protected — logged-in users */}
       <Route path="/cart"     element={<Layout><Protected><Cart /></Protected></Layout>} />
+      <Route path="/checkout" element={<Layout><Protected><Checkout /></Protected></Layout>} />
       <Route path="/wishlist" element={<Layout><Protected><Wishlist /></Protected></Layout>} />
       <Route path="/orders"   element={<Layout><Protected><Orders /></Protected></Layout>} />
       <Route path="/profile"  element={<Layout><Protected><Profile /></Protected></Layout>} />

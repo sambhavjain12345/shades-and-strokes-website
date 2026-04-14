@@ -84,9 +84,12 @@ export function ProductDetail() {
           {product.title.split(' ').map((w,i)=>i===1?<em key={i} style={{fontStyle:'italic',color:'var(--gold)',fontFamily:"'IM Fell English',serif"}}>{w} </em>:<span key={i}>{w} </span>)}
         </h1>
         <div style={{ fontSize:'.62rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'2rem' }}>by {product.artist_name}</div>
-        <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'2.2rem', fontWeight:300, color:'var(--gold)', marginBottom:'.5rem' }}>₹ {Number(product.price).toLocaleString()}</div>
-        <div style={{ display:'flex', alignItems:'center', gap:'.6rem', fontSize:'.56rem', letterSpacing:'.2em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'2.5rem' }}>
-          <span style={{ width:'6px', height:'6px', background:'#4a8c5c', borderRadius:'50%' }} />Available · Ships in 48 hours
+        <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'2.2rem', fontWeight:300, color: product.stock === 0 ? 'var(--muted)' : 'var(--gold)', marginBottom:'.5rem' }}>
+          {product.stock === 0 ? <span style={{ textDecoration:'line-through', opacity:.6 }}>₹ {Number(product.price).toLocaleString()}</span> : `₹ ${Number(product.price).toLocaleString()}`}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:'.6rem', fontSize:'.56rem', letterSpacing:'.2em', textTransform:'uppercase', color: product.stock === 0 ? '#c05050' : 'var(--muted)', marginBottom:'2.5rem' }}>
+          <span style={{ width:'6px', height:'6px', background: product.stock === 0 ? '#c05050' : '#4a8c5c', borderRadius:'50%' }} />
+          {product.stock === 0 ? 'Sold Out · Not available' : `Available · ${product.stock} in stock · Ships in 48 hours`}
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:0, background:'var(--border)', marginBottom:'2.5rem' }}>
@@ -108,7 +111,13 @@ export function ProductDetail() {
         </div>
 
         <div style={{ display:'flex', gap:'.8rem', marginBottom:'2rem' }}>
-          <button className="btn-primary" style={{ flex:1 }} onClick={handleCart}>Add to Cart</button>
+          {product.stock === 0 ? (
+            <button className="btn-primary" style={{ flex:1, opacity:.5, cursor:'not-allowed', background:'var(--muted2)' }} disabled>
+              Sold Out
+            </button>
+          ) : (
+            <button className="btn-primary" style={{ flex:1 }} onClick={handleCart}>Add to Cart</button>
+          )}
           <button
             onClick={handleWish}
             title={wished ? 'Remove from wishlist' : 'Add to wishlist'}

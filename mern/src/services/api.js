@@ -81,10 +81,11 @@ export const OrdersAPI = {
     const q = new URLSearchParams(params).toString();
     return apiFetch(`/orders${q ? '?' + q : ''}`);
   },
-  getOne:       (id)              => apiFetch(`/orders/${id}`),
-  place:        (b)               => apiFetch('/orders', { method: 'POST', body: JSON.stringify(b) }),
-  updateStatus: (id, status, desc) => apiFetch(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, description: desc }) }),
-  cancel:       (id)              => apiFetch(`/orders/${id}`, { method: 'DELETE' }),
+  getOne:        (id)               => apiFetch(`/orders/${id}`),
+  place:         (b)                => apiFetch('/orders', { method: 'POST', body: JSON.stringify(b) }),
+  updateStatus:  (id, status, desc) => apiFetch(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, description: desc }) }),
+  cancel:        (id)               => apiFetch(`/orders/${id}`, { method: 'DELETE' }),
+  requestReturn: (id, reason)       => apiFetch(`/orders/${id}/return`, { method: 'POST', body: JSON.stringify({ reason }) }),
 };
 
 // ── Admin ─────────────────────────────────────────────────────
@@ -126,7 +127,6 @@ export const ArtistAPI = {
 // ── Helpers ───────────────────────────────────────────────────
 export const getBgClass = (id) => `bg${((id - 1) % 9) + 1}`;
 
-// Returns inline style for product image — real URL if available, gradient fallback
 export const getProductImageStyle = (product) => {
   if (product?.image_url) {
     return {
@@ -135,5 +135,5 @@ export const getProductImageStyle = (product) => {
       backgroundPosition: 'center',
     };
   }
-  return {}; // use className bg1-bg9 instead
+  return {};
 };

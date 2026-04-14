@@ -16,7 +16,6 @@ exports.getCart = asyncHandler(async (req, res) => {
   );
 
   const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-
   res.json({ success: true, items, subtotal, total: subtotal });
 });
 
@@ -25,15 +24,34 @@ exports.addToCart = asyncHandler(async (req, res) => {
   const { product_id, quantity = 1 } = req.body;
 
   // Check product exists and has stock
-  const [prod] = await pool.query(
+  const [[prod]] = await pool.query(
     'SELECT id, stock FROM products WHERE id = ? AND is_active = 1',
     [product_id]
   );
-  if (!prod.length) {
+  if (!prod) {
     return res.status(404).json({ success: false, message: 'Artwork not found' });
   }
-  if (prod[0].stock < quantity) {
-    return res.status(400).json({ success: false, message: 'Insufficient stock' });
+  if (prod.stock < 1) {
+    return res.status(400).json({ success: false, message: 'This artwork is sold out' });
+  }
+
+  // Check how many the user already has in cart
+  const [[existing]] = await pool.query(
+    'SELECT id, quantity FROM cart_items WHERE user_id = ? AND product_id = ?',
+    [req.user.id, product_id]
+  );
+
+  const currentQty = existing ? existing.quantity : 0;
+  const newTotal   = currentQty + quantity;
+
+  // Don't allow adding more than available stock
+  if (newTotal > prod.stock) {
+    return res.status(400).json({
+      success: false,
+      message: prod.stock === 1
+        ? 'Only 1 of this artwork is available — it is already in your cart'
+        : `Only ${prod.stock} available. You already have ${currentQty} in your cart`,
+    });
   }
 
   // Upsert cart item
@@ -47,7 +65,7 @@ exports.addToCart = asyncHandler(async (req, res) => {
   // Return updated cart
   const [items] = await pool.query(
     `SELECT ci.id, ci.quantity,
-            p.id AS product_id, p.title, p.price, p.image_url
+            p.id AS product_id, p.title, p.price, p.image_url, p.stock
      FROM cart_items ci JOIN products p ON ci.product_id = p.id
      WHERE ci.user_id = ?`,
     [req.user.id]
@@ -62,12 +80,24 @@ exports.updateCartItem = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Quantity must be at least 1' });
   }
 
-  const [item] = await pool.query(
-    'SELECT id FROM cart_items WHERE id = ? AND user_id = ?',
+  // Get cart item with product stock
+  const [[item]] = await pool.query(
+    `SELECT ci.id, ci.product_id, p.stock
+     FROM cart_items ci
+     JOIN products p ON ci.product_id = p.id
+     WHERE ci.id = ? AND ci.user_id = ?`,
     [req.params.id, req.user.id]
   );
-  if (!item.length) {
+  if (!item) {
     return res.status(404).json({ success: false, message: 'Cart item not found' });
+  }
+
+  // Cap quantity at available stock
+  if (quantity > item.stock) {
+    return res.status(400).json({
+      success: false,
+      message: `Only ${item.stock} of this artwork available`,
+    });
   }
 
   await pool.query('UPDATE cart_items SET quantity = ? WHERE id = ?', [quantity, req.params.id]);

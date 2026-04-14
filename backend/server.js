@@ -20,6 +20,18 @@ const { errorHandler } = require('./middleware/error');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+// ── Global error handlers — prevent full server crash ─────────
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err.message);
+  console.error(err.stack);
+  // Do NOT exit — keep server running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Promise Rejection:', reason);
+  // Do NOT exit — keep server running
+});
+
 // ── Security ──────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 
@@ -38,8 +50,18 @@ app.use(cors({
 }));
 
 // ── Rate limiting ─────────────────────────────────────────────
-const limiter = rateLimit({ windowMs: 15*60*1000, max: 100, message: { success:false, message:'Too many requests' } });
-const authLimiter = rateLimit({ windowMs: 15*60*1000, max: 10, message: { success:false, message:'Too many login attempts' } });
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { success: false, message: 'Too many requests' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { success: false, message: 'Too many login attempts' },
+});
 app.use('/api/', limiter);
 app.use('/api/auth/login',    authLimiter);
 app.use('/api/auth/register', authLimiter);
@@ -56,7 +78,13 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Health check ──────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'Shades & Strokes API is running', version: '2.0.0', env: process.env.NODE_ENV, timestamp: new Date().toISOString() });
+  res.json({
+    success: true,
+    message: 'Shades & Strokes API is running',
+    version: '2.0.0',
+    env: process.env.NODE_ENV,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ── API Routes ────────────────────────────────────────────────
@@ -70,7 +98,7 @@ app.use('/api/admin',    adminRouter);
 
 // ── Serve React build in production ───────────────────────────
 if (process.env.NODE_ENV === 'production') {
-  const distPath = path.join(__dirname, '../frontend/dist');
+  const distPath = path.join(__dirname, '../mern/dist');
   app.use(express.static(distPath));
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) res.sendFile(path.join(distPath, 'index.html'));

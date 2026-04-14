@@ -58,7 +58,8 @@ export function Cart() {
 
   const checkout = () => {
     if (!user) { showToast('Sign in to checkout'); navigate('/login'); return; }
-    navigate('/orders');
+    if (items.length === 0) { showToast('Your cart is empty', 'error'); return; }
+    navigate('/checkout');
   };
 
   const empty = items.length === 0;
@@ -194,7 +195,6 @@ export function Wishlist() {
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'1px', background:'var(--border)' }}>
           {items.map(item => (
             <div key={item.id||item.product_id} style={{ background:'var(--surface2)', position:'relative', overflow:'hidden' }}>
-              {/* Artwork image */}
               <div style={{ height:'260px', position:'relative', overflow:'hidden' }}
                 onClick={() => window.location.href=`/product/${item.product_id}`}
                 onMouseEnter={e => e.currentTarget.querySelector('.wish-img-bg').style.transform='scale(1.07)'}
@@ -212,18 +212,13 @@ export function Wishlist() {
                   }} />
                 <div style={{ position:'absolute', inset:0, background:'linear-gradient(to top,rgba(8,7,6,.5) 0%,transparent 60%)' }} />
               </div>
-
-              {/* Info row */}
               <div style={{ padding:'1.2rem 1.4rem', borderTop:'.5px solid var(--border)', background:'var(--surface2)' }}>
                 <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1rem', fontWeight:400, color:'var(--cream)', marginBottom:'.5rem' }}>{item.title}</div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1rem' }}>
                   <span style={{ fontSize:'.56rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--muted)' }}>{item.medium||'Original Work'}</span>
                   <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1rem', color:'var(--gold)' }}>₹ {Number(item.price).toLocaleString()}</span>
                 </div>
-
-                {/* Action buttons — always visible */}
                 <div style={{ display:'flex', gap:'.6rem' }}>
-                  {/* Add to Cart */}
                   <button
                     onClick={() => handleCart(item)}
                     style={{ flex:1, fontSize:'.58rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--ink)', background:'var(--gold)', border:'none', padding:'.6rem .8rem', cursor:'none', fontFamily:"'Josefin Sans',sans-serif", fontWeight:400, transition:'background .25s' }}
@@ -231,16 +226,12 @@ export function Wishlist() {
                     onMouseLeave={e=>e.currentTarget.style.background='var(--gold)'}>
                     Add to Cart
                   </button>
-
-                  {/* View product */}
                   <Link to={`/product/${item.product_id}`}
                     style={{ fontSize:'.58rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--gold)', border:'.5px solid var(--border2)', padding:'.6rem .8rem', textDecoration:'none', fontFamily:"'Josefin Sans',sans-serif", display:'flex', alignItems:'center', transition:'all .3s' }}
                     onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--gold)';e.currentTarget.style.background='rgba(201,168,76,.06)'}}
                     onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border2)';e.currentTarget.style.background='transparent'}}>
                     View
                   </Link>
-
-                  {/* Remove from wishlist */}
                   <button
                     onClick={() => handleRemove(item)}
                     title="Remove from wishlist"
@@ -268,13 +259,31 @@ export function Orders() {
   const { user }      = useAuth();
   const { showToast } = useToast();
   const navigate      = useNavigate();
-  const [orders, setOrders]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen]       = useState({});
-  const [details, setDetails] = useState({});
+  const [orders, setOrders]     = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [open, setOpen]         = useState({});
+  const [details, setDetails]   = useState({});
+  const [returning, setReturning] = useState({});
 
-  const STATUS_LABEL = { confirmed:'Confirmed', packaging:'Packaging', shipped:'In Transit', delivered:'Delivered', cancelled:'Cancelled', pending:'Pending' };
-  const STATUS_COLOR = { confirmed:'#4a8c5c', packaging:'var(--gold3)', shipped:'var(--gold)', delivered:'var(--muted)', cancelled:'#c05050' };
+  const STATUS_LABEL = {
+    confirmed:        'Confirmed',
+    packaging:        'Packaging',
+    shipped:          'In Transit',
+    delivered:        'Delivered',
+    cancelled:        'Cancelled',
+    pending:          'Pending',
+    return_requested: 'Return Requested',
+    returned:         'Returned',
+  };
+  const STATUS_COLOR = {
+    confirmed:        '#4a8c5c',
+    packaging:        'var(--gold3)',
+    shipped:          'var(--gold)',
+    delivered:        'var(--muted)',
+    cancelled:        '#c05050',
+    return_requested: '#c07830',
+    returned:         '#8c6a4a',
+  };
   const STEPS = ['confirmed','packaging','shipped','delivered'];
 
   useEffect(() => {
@@ -291,6 +300,25 @@ export function Orders() {
         const d = await OrdersAPI.getOne(orderId);
         setDetails(prev => ({ ...prev, [orderId]: d.order }));
       } catch {}
+    }
+  };
+
+  const handleReturn = async (orderId) => {
+    const reason = window.prompt('Please tell us why you want to return this order (optional):');
+    if (reason === null) return; // user cancelled the prompt
+    setReturning(r => ({ ...r, [orderId]: true }));
+    try {
+      await OrdersAPI.requestReturn(orderId, reason);
+      showToast('Return request submitted! Our team will contact you shortly.', 'success');
+      // Refresh orders list
+      const d = await OrdersAPI.getAll();
+      setOrders(d.orders);
+      // Clear cached details so it reloads
+      setDetails(prev => { const n = {...prev}; delete n[orderId]; return n; });
+    } catch (e) {
+      showToast(e.message || 'Failed to submit return request', 'error');
+    } finally {
+      setReturning(r => ({ ...r, [orderId]: false }));
     }
   };
 
@@ -315,8 +343,13 @@ export function Orders() {
       {orders.map(order => {
         const det = details[order.id];
         const curIdx = STEPS.indexOf(order.status);
+        const isDelivered = order.status === 'delivered';
+        const isReturnRequested = order.status === 'return_requested';
+        const isReturned = order.status === 'returned';
+
         return (
-          <div key={order.id} style={{ background:'var(--surface2)', border:'.5px solid var(--border)', marginBottom:'1px', overflow:'hidden', transition:'border-color .3s' }}>
+          <div key={order.id} style={{ background:'var(--surface2)', border:'.5px solid var(--border)', marginBottom:'1px', overflow:'hidden' }}>
+            {/* Order header row */}
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'1.5rem 2rem', cursor:'none', borderBottom: open[order.id]?'.5px solid var(--border)':'none' }}
               onClick={() => toggle(order.id)}>
               <div>
@@ -331,10 +364,13 @@ export function Orders() {
               <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'1rem', color:'var(--gold)' }}>₹ {Number(order.total_amount).toLocaleString()}</div>
               <span style={{ color:'var(--muted)', fontSize:'1rem' }}>{open[order.id]?'−':'+'}</span>
             </div>
+
+            {/* Expanded details */}
             {open[order.id] && (
               <div style={{ padding:'2rem' }}>
                 {!det ? <div style={{ color:'var(--muted)', fontSize:'.65rem', letterSpacing:'.12em' }}>Loading details…</div> : (
                   <>
+                    {/* Timeline */}
                     <div style={{ position:'relative', paddingLeft:'2rem' }}>
                       <div style={{ position:'absolute', left:'.35rem', top:'.4rem', bottom:'.4rem', width:'.5px', background:'var(--border)' }} />
                       {STEPS.map((step,i) => {
@@ -350,6 +386,20 @@ export function Orders() {
                         );
                       })}
                     </div>
+
+                    {/* Return request status banner */}
+                    {isReturnRequested && (
+                      <div style={{ marginTop:'2rem', padding:'1rem 1.5rem', background:'rgba(192,120,48,.08)', border:'.5px solid rgba(192,120,48,.3)', display:'flex', alignItems:'center', gap:'.8rem' }}>
+                        <span style={{ fontSize:'.6rem', letterSpacing:'.18em', textTransform:'uppercase', color:'#c07830' }}>⏳ Return request submitted — our team will contact you within 2-3 business days.</span>
+                      </div>
+                    )}
+                    {isReturned && (
+                      <div style={{ marginTop:'2rem', padding:'1rem 1.5rem', background:'rgba(140,106,74,.08)', border:'.5px solid rgba(140,106,74,.3)' }}>
+                        <span style={{ fontSize:'.6rem', letterSpacing:'.18em', textTransform:'uppercase', color:'#8c6a4a' }}>✓ This order has been returned and refunded.</span>
+                      </div>
+                    )}
+
+                    {/* Items */}
                     {det.items?.map(it => (
                       <div key={it.id} style={{ display:'flex', alignItems:'center', gap:'1rem', marginTop:'2rem', paddingTop:'2rem', borderTop:'.5px solid var(--border)' }}>
                         <div
@@ -369,6 +419,31 @@ export function Orders() {
                         </div>
                       </div>
                     ))}
+
+                    {/* Return button — only shown for delivered orders */}
+                    {isDelivered && (
+                      <div style={{ marginTop:'2rem', paddingTop:'2rem', borderTop:'.5px solid var(--border)' }}>
+                        <div style={{ fontSize:'.56rem', letterSpacing:'.14em', color:'var(--muted)', marginBottom:'1rem' }}>
+                          Not satisfied with your purchase? You can request a return within 7 days of delivery.
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReturn(order.id); }}
+                          disabled={returning[order.id]}
+                          style={{
+                            fontSize:'.58rem', letterSpacing:'.18em', textTransform:'uppercase',
+                            color:'#c05050', background:'rgba(192,80,80,.06)',
+                            border:'.5px solid rgba(192,80,80,.35)',
+                            padding:'.7rem 1.5rem', cursor:'none',
+                            fontFamily:"'Josefin Sans',sans-serif",
+                            transition:'all .25s',
+                            opacity: returning[order.id] ? 0.6 : 1,
+                          }}
+                          onMouseEnter={e=>{ e.currentTarget.style.background='rgba(192,80,80,.15)'; e.currentTarget.style.borderColor='rgba(192,80,80,.6)'; }}
+                          onMouseLeave={e=>{ e.currentTarget.style.background='rgba(192,80,80,.06)'; e.currentTarget.style.borderColor='rgba(192,80,80,.35)'; }}>
+                          {returning[order.id] ? 'Submitting…' : '↩ Request Return'}
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -478,4 +553,3 @@ export function Profile() {
     </div>
   );
 }
-

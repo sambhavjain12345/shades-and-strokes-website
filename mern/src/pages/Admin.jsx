@@ -156,8 +156,13 @@ function ProductModal({ product, artists, categories, onSave, onClose }) {
               onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
           </div>
           <div>
-            <label style={lbl}>Stock</label>
-            <input style={inp} type="number" value={form.stock} onChange={e => set('stock', e.target.value)} placeholder="1"
+            <label style={lbl}>
+              Quantity Available
+              <span style={{ color:'var(--muted2)', fontSize:'.46rem', marginLeft:'.4rem', textTransform:'none', letterSpacing:0 }}>
+                (0 = sold out)
+              </span>
+            </label>
+            <input style={inp} type="number" min="0" value={form.stock} onChange={e => set('stock', e.target.value)} placeholder="1"
               onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
           </div>
           <div>

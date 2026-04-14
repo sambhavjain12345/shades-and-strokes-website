@@ -29,11 +29,12 @@ const orderCtrl   = require('../controllers/orderController');
 const { orderRules } = require('../middleware/validate');
 const { authorize }  = require('../middleware/auth');
 
-orderRouter.get   ('/',         protect, orderCtrl.getOrders);
-orderRouter.get   ('/:id',      protect, orderCtrl.getOrder);
-orderRouter.post  ('/',         protect, orderRules, validate, orderCtrl.placeOrder);
-orderRouter.put   ('/:id/status', protect, authorize('admin'), orderCtrl.updateOrderStatus);
-orderRouter.delete('/:id',      protect, orderCtrl.cancelOrder);
+orderRouter.get   ('/',               protect, orderCtrl.getOrders);
+orderRouter.get   ('/:id',            protect, orderCtrl.getOrder);
+orderRouter.post  ('/',               protect, orderRules, validate, orderCtrl.placeOrder);
+orderRouter.put   ('/:id/status',     protect, authorize('admin'), orderCtrl.updateOrderStatus);
+orderRouter.post  ('/:id/return',     protect, orderCtrl.requestReturn);   // ← NEW: return request
+orderRouter.delete('/:id',            protect, orderCtrl.cancelOrder);
 
 // ── Admin ─────────────────────────────────────────────────────
 const adminRouter = express.Router();
