@@ -1,14 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getBgClass } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import Cursor from '../components/common/Cursor';
 
-// ── API helper using token ────────────────────────────────────
+const API_BASE = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace('/api', '')
+  : '';
+
+// ── API helper ────────────────────────────────────────────────
 const adminFetch = (url, opts = {}) => {
   const token = localStorage.getItem('ss_token');
-  return fetch(url, {
+  return fetch(`${API_BASE}${url}`, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
@@ -18,29 +22,33 @@ const adminFetch = (url, opts = {}) => {
   }).then(r => r.json());
 };
 
+// Upload image to Cloudinary via backend
+const uploadImage = async (file) => {
+  const token = localStorage.getItem('ss_token');
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch(`${API_BASE}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Upload failed');
+  return data.url;
+};
+
 // ── Shared styles ─────────────────────────────────────────────
 const inp = {
-  width: '100%',
-  background: 'rgba(201,168,76,.04)',
-  border: '.5px solid var(--border2)',
-  outline: 'none',
-  padding: '.7rem 1rem',
-  fontFamily: "'Josefin Sans',sans-serif",
-  fontSize: '.72rem',
-  fontWeight: 300,
-  letterSpacing: '.08em',
-  color: 'var(--cream)',
-  caretColor: 'var(--gold)',
-  transition: 'border-color .3s',
-  boxSizing: 'border-box',
+  width: '100%', background: 'rgba(201,168,76,.04)',
+  border: '.5px solid var(--border2)', outline: 'none',
+  padding: '.7rem 1rem', fontFamily: "'Josefin Sans',sans-serif",
+  fontSize: '.72rem', fontWeight: 300, letterSpacing: '.08em',
+  color: 'var(--cream)', caretColor: 'var(--gold)',
+  transition: 'border-color .3s', boxSizing: 'border-box',
 };
 const lbl = {
-  fontSize: '.54rem',
-  letterSpacing: '.26em',
-  textTransform: 'uppercase',
-  color: 'var(--muted)',
-  display: 'block',
-  marginBottom: '.5rem',
+  fontSize: '.54rem', letterSpacing: '.26em', textTransform: 'uppercase',
+  color: 'var(--muted)', display: 'block', marginBottom: '.5rem',
 };
 const th = {
   fontSize: '.52rem', letterSpacing: '.22em', textTransform: 'uppercase',
@@ -66,8 +74,12 @@ const outlineBtn = (color = 'var(--muted)') => ({
   transition: 'all .25s', marginRight: '.4rem',
 });
 
-const STATUS_OPTS  = ['pending','confirmed','packaging','shipped','delivered','cancelled'];
-const STATUS_COLOR = { confirmed:'#4a8c5c', packaging:'var(--gold3)', shipped:'var(--gold3)', delivered:'var(--muted)', cancelled:'#c05050', pending:'var(--muted2)' };
+const STATUS_OPTS  = ['pending','confirmed','packaging','shipped','delivered','cancelled','return_requested','returned'];
+const STATUS_COLOR = {
+  confirmed: '#4a8c5c', packaging: 'var(--gold3)', shipped: 'var(--gold3)',
+  delivered: 'var(--muted)', cancelled: '#c05050', pending: 'var(--muted2)',
+  return_requested: '#c07830', returned: '#8c6a4a',
+};
 
 // ── Confirm Dialog ────────────────────────────────────────────
 function Confirm({ msg, onOk, onCancel }) {
@@ -85,12 +97,100 @@ function Confirm({ msg, onOk, onCancel }) {
   );
 }
 
+// ── Image Upload Component ────────────────────────────────────
+function ImageUploader({ value, onChange }) {
+  const fileRef      = useRef();
+  const [uploading, setUploading] = useState(false);
+  const [dragOver,  setDragOver]  = useState(false);
+  const { showToast } = useToast ? useToast() : { showToast: alert };
+
+  const handleFile = async (file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file);
+      onChange(url);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      <label style={lbl}>
+        Artwork Image
+        <span style={{ color:'var(--muted2)', fontSize:'.46rem', marginLeft:'.5rem', textTransform:'none', letterSpacing:0 }}>
+          — upload a file OR paste a URL below
+        </span>
+      </label>
+
+      {/* Drop zone */}
+      <div
+        onClick={() => !uploading && fileRef.current.click()}
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+        style={{
+          border: `.5px dashed ${dragOver ? 'var(--gold)' : 'var(--border2)'}`,
+          background: dragOver ? 'rgba(201,168,76,.06)' : 'rgba(201,168,76,.02)',
+          padding: '1.2rem', textAlign: 'center', cursor: uploading ? 'not-allowed' : 'none',
+          transition: 'all .3s', marginBottom: '.8rem',
+        }}>
+        {uploading ? (
+          <div style={{ fontSize:'.62rem', letterSpacing:'.14em', color:'var(--gold3)' }}>⏳ Uploading to Cloudinary…</div>
+        ) : (
+          <>
+            <div style={{ fontSize:'1.4rem', marginBottom:'.4rem' }}>📁</div>
+            <div style={{ fontSize:'.6rem', letterSpacing:'.14em', color:'var(--muted)' }}>
+              Click to browse or drag & drop an image here
+            </div>
+            <div style={{ fontSize:'.52rem', letterSpacing:'.1em', color:'var(--muted2)', marginTop:'.3rem' }}>
+              JPG, PNG, WEBP — max 5MB
+            </div>
+          </>
+        )}
+        <input
+          ref={fileRef} type="file" accept="image/*" style={{ display:'none' }}
+          onChange={e => handleFile(e.target.files[0])}
+        />
+      </div>
+
+      {/* Manual URL input */}
+      <input
+        style={inp} value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Or paste image URL: https://images.unsplash.com/..."
+        onFocus={e => e.target.style.borderColor = 'var(--gold)'}
+        onBlur={e => e.target.style.borderColor = 'var(--border2)'}
+      />
+
+      {/* Preview */}
+      {value && (
+        <div style={{ marginTop:'.6rem', position:'relative' }}>
+          <div style={{
+            width:'100%', height:'140px',
+            backgroundImage: `url(${value})`, backgroundSize:'cover', backgroundPosition:'center',
+            border:'.5px solid var(--border2)',
+          }} />
+          <button
+            type="button" onClick={() => onChange('')}
+            style={{ position:'absolute', top:'.4rem', right:'.4rem', background:'rgba(192,80,80,.85)', color:'#fff', border:'none', padding:'.3rem .7rem', cursor:'none', fontSize:'.5rem', letterSpacing:'.12em', textTransform:'uppercase' }}>
+            ✕ Remove
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Product Modal ─────────────────────────────────────────────
 function ProductModal({ product, artists, categories, onSave, onClose }) {
   const [form, setForm] = useState({
     title:       product?.title       || '',
     price:       product?.price       || '',
-    stock:       product?.stock       || 1,
+    stock:       product?.stock       ?? 1,
     medium:      product?.medium      || '',
     dimensions:  product?.dimensions  || '',
     year:        product?.year        || new Date().getFullYear(),
@@ -104,99 +204,80 @@ function ProductModal({ product, artists, categories, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.8)', zIndex:9100, display:'flex', alignItems:'center', justifyContent:'center', padding:'1rem', overflowY:'auto' }}>
-      <div style={{ background:'var(--surface2)', border:'.5px solid var(--border2)', padding:'2.5rem', width:'100%', maxWidth:'580px' }}>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.85)', zIndex:9100, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'2rem 1rem', overflowY:'auto' }}>
+      <div style={{ background:'var(--surface2)', border:'.5px solid var(--border2)', padding:'2.5rem', width:'100%', maxWidth:'600px' }}>
         <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.4rem', color:'var(--cream)', marginBottom:'2rem' }}>
           {product ? 'Edit Artwork' : 'Add New Artwork'}
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1.2rem 1.6rem' }}>
-          <div style={{ gridColumn:'1/-1' }}>
-            <label style={lbl}>
-              Image URL
-              <span style={{ color:'var(--muted2)', fontSize:'.48rem', marginLeft:'.5rem' }}>(optional — paste any image link)</span>
-            </label>
-            <input style={inp} value={form.image_url} onChange={e => set('image_url', e.target.value)} placeholder="https://images.unsplash.com/photo-..."
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-            {form.image_url ? (
-              <div style={{ marginTop:'.6rem', position:'relative' }}>
-                <div style={{ width:'100%', height:'120px', backgroundImage:`url(${form.image_url})`, backgroundSize:'cover', backgroundPosition:'center', border:'.5px solid var(--border2)' }} />
-                <button type="button" onClick={() => set('image_url', 'CLEAR')}
-                  style={{ position:'absolute', top:'.4rem', right:'.4rem', background:'rgba(192,80,80,.8)', color:'#fff', border:'none', padding:'.3rem .7rem', cursor:'none', fontSize:'.5rem', letterSpacing:'.12em', textTransform:'uppercase' }}>
-                  ✕ Clear
-                </button>
-              </div>
-            ) : product?.image_url ? (
-              <div style={{ fontSize:'.56rem', color:'var(--gold3)', letterSpacing:'.1em', marginTop:'.4rem' }}>
-                ⚠ Existing image will be kept — paste new URL to replace it
-              </div>
-            ) : null}
-          </div>
-          <div style={{ gridColumn:'1/-1' }}>
-            <label style={lbl}>Title *</label>
-            <input style={inp} value={form.title} onChange={e => set('title', e.target.value)} placeholder="Artwork title"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>Artist *</label>
-            <select value={form.artist_id} onChange={e => set('artist_id', e.target.value)} style={{ ...inp, appearance:'none' }}>
-              <option value="">— Select artist —</option>
-              {artists.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={lbl}>Category *</label>
-            <select value={form.category_id} onChange={e => set('category_id', e.target.value)} style={{ ...inp, appearance:'none' }}>
-              <option value="">— Select category —</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={lbl}>Price (₹) *</label>
-            <input style={inp} type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="0"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>
-              Quantity Available
-              <span style={{ color:'var(--muted2)', fontSize:'.46rem', marginLeft:'.4rem', textTransform:'none', letterSpacing:0 }}>
-                (0 = sold out)
-              </span>
-            </label>
-            <input style={inp} type="number" min="0" value={form.stock} onChange={e => set('stock', e.target.value)} placeholder="1"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>Medium</label>
-            <input style={inp} value={form.medium} onChange={e => set('medium', e.target.value)} placeholder="Oil on Canvas"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>Dimensions</label>
-            <input style={inp} value={form.dimensions} onChange={e => set('dimensions', e.target.value)} placeholder="90 × 120 cm"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>Year</label>
-            <input style={inp} type="number" value={form.year} onChange={e => set('year', e.target.value)}
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div>
-            <label style={lbl}>Tag</label>
-            <input style={inp} value={form.tag} onChange={e => set('tag', e.target.value)} placeholder="Featured / New"
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          </div>
-          <div style={{ gridColumn:'1/-1', display:'flex', alignItems:'center', gap:'.8rem' }}>
-            <input type="checkbox" id="feat" checked={form.is_featured} onChange={e => set('is_featured', e.target.checked)}
-              style={{ width:'14px', height:'14px', accentColor:'var(--gold)', cursor:'none' }} />
-            <label htmlFor="feat" style={{ ...lbl, margin:0, cursor:'none' }}>Mark as Featured</label>
-          </div>
-          <div style={{ gridColumn:'1/-1' }}>
-            <label style={lbl}>Description</label>
-            <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
-              placeholder="Artwork description…" style={{ ...inp, resize:'vertical', lineHeight:1.6 }}
-              onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+
+        <div style={{ display:'flex', flexDirection:'column', gap:'1.4rem' }}>
+          {/* Image uploader */}
+          <ImageUploader value={form.image_url} onChange={v => set('image_url', v)} />
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1.2rem 1.6rem' }}>
+            <div style={{ gridColumn:'1/-1' }}>
+              <label style={lbl}>Title *</label>
+              <input style={inp} value={form.title} onChange={e => set('title', e.target.value)} placeholder="Artwork title"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Artist *</label>
+              <select value={form.artist_id} onChange={e => set('artist_id', e.target.value)} style={{ ...inp, appearance:'none' }}>
+                <option value="">— Select artist —</option>
+                {artists.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Category *</label>
+              <select value={form.category_id} onChange={e => set('category_id', e.target.value)} style={{ ...inp, appearance:'none' }}>
+                <option value="">— Select category —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Price (₹) *</label>
+              <input style={inp} type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="0"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Quantity Available <span style={{ color:'var(--muted2)', fontSize:'.46rem', textTransform:'none', letterSpacing:0 }}>(0 = sold out)</span></label>
+              <input style={inp} type="number" min="0" value={form.stock} onChange={e => set('stock', e.target.value)} placeholder="1"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Medium</label>
+              <input style={inp} value={form.medium} onChange={e => set('medium', e.target.value)} placeholder="Oil on Canvas"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Dimensions</label>
+              <input style={inp} value={form.dimensions} onChange={e => set('dimensions', e.target.value)} placeholder="90 × 120 cm"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Year</label>
+              <input style={inp} type="number" value={form.year} onChange={e => set('year', e.target.value)}
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div>
+              <label style={lbl}>Tag</label>
+              <input style={inp} value={form.tag} onChange={e => set('tag', e.target.value)} placeholder="Featured / New Arrival"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            <div style={{ gridColumn:'1/-1', display:'flex', alignItems:'center', gap:'.8rem' }}>
+              <input type="checkbox" id="feat" checked={form.is_featured} onChange={e => set('is_featured', e.target.checked)}
+                style={{ width:'14px', height:'14px', accentColor:'var(--gold)', cursor:'none' }} />
+              <label htmlFor="feat" style={{ ...lbl, margin:0, cursor:'none' }}>Mark as Featured</label>
+            </div>
+            <div style={{ gridColumn:'1/-1' }}>
+              <label style={lbl}>Description</label>
+              <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3}
+                placeholder="Artwork description…" style={{ ...inp, resize:'vertical', lineHeight:1.6 }}
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
           </div>
         </div>
+
         <div style={{ display:'flex', gap:'.8rem', justifyContent:'flex-end', marginTop:'2rem', paddingTop:'1.5rem', borderTop:'.5px solid var(--border)' }}>
           <button onClick={onClose} style={{ ...outlineBtn('var(--muted)'), padding:'.7rem 1.6rem', fontSize:'.6rem' }}>Cancel</button>
           <button onClick={() => onSave(form)} style={{ ...goldBtn, padding:'.7rem 1.8rem', fontSize:'.62rem' }}
@@ -235,8 +316,6 @@ function ArtistModal({ artist, users, onSave, onClose }) {
                 onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
             </div>
           ))}
-
-          {/* Link to user account */}
           <div>
             <label style={lbl}>
               Link to User Account
@@ -244,21 +323,26 @@ function ArtistModal({ artist, users, onSave, onClose }) {
                 — gives them Artist Studio access
               </span>
             </label>
-            <select value={form.user_id} onChange={e=>set('user_id',e.target.value)} style={{ ...inp, appearance:'none' }}>
-              <option value="">— No linked account —</option>
-              {(users||[]).map(u => (
-                <option key={u.id} value={u.id} style={{ background:'var(--surface2)' }}>
-                  {u.name} ({u.email}) — {u.role}
-                </option>
-              ))}
-            </select>
+            {users && users.length > 0 ? (
+              <select value={form.user_id} onChange={e=>set('user_id',e.target.value)} style={{ ...inp, appearance:'none' }}>
+                <option value="">— No linked account —</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id} style={{ background:'var(--surface2)' }}>
+                    {u.name} ({u.email}) — {u.role}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ ...inp, color:'var(--muted)', fontSize:'.62rem' }}>
+                Loading users… (if empty, check /api/admin/users/all)
+              </div>
+            )}
             {form.user_id && (
               <div style={{ fontSize:'.56rem', color:'#4a8c5c', letterSpacing:'.1em', marginTop:'.4rem' }}>
-                ✓ This user will become role=artist and can access the Artist Studio portal
+                ✓ This user will become role=artist and gain Artist Studio access
               </div>
             )}
           </div>
-
           <div>
             <label style={lbl}>Bio</label>
             <textarea value={form.bio} onChange={e=>set('bio',e.target.value)} rows={4} placeholder="Artist biography…"
@@ -301,23 +385,22 @@ export default function Admin() {
   const [artistModal,  setArtistModal]  = useState(null);
   const [confirm,      setConfirm]      = useState(null);
 
-  // Redirect non-admins
   useEffect(() => {
     if (user && user.role !== 'admin') navigate('/');
   }, [user]);
 
-  // Load dashboard data on mount
   useEffect(() => {
     loadDashboard();
     loadCategories();
     loadArtists();
+    loadAllUsers();
   }, []);
 
-  // Load tab data when tab changes
   useEffect(() => {
     if (tab === 'products') loadProducts();
     if (tab === 'artists')  loadArtists();
     if (tab === 'orders')   loadAllOrders();
+    if (tab === 'users')    loadAllUsers();
   }, [tab]);
 
   const loadDashboard = async () => {
@@ -331,7 +414,7 @@ export default function Admin() {
 
   const loadAllOrders = async () => {
     try {
-      const o = await adminFetch('/api/admin/orders?limit=50');
+      const o = await adminFetch('/api/admin/orders?limit=100');
       if (o.success) setOrders(o.orders || []);
     } catch {}
   };
@@ -342,7 +425,7 @@ export default function Admin() {
       const d = await adminFetch(`/api/admin/products?search=${encodeURIComponent(prodSearch)}&limit=50`);
       if (d.success) setProducts(d.products || []);
       else setProducts([]);
-    } catch (e) { console.error('Products load failed:', e); setProducts([]); }
+    } catch { setProducts([]); }
     finally { setLoading(false); }
   };
 
@@ -352,7 +435,7 @@ export default function Admin() {
       const d = await adminFetch(`/api/admin/artists?search=${encodeURIComponent(artSearch)}`);
       if (d.success) setArtists(d.artists || []);
       else setArtists([]);
-    } catch (e) { console.error('Artists load failed:', e); setArtists([]); }
+    } catch { setArtists([]); }
     finally { setLoading(false); }
   };
 
@@ -360,10 +443,32 @@ export default function Admin() {
     try {
       const d = await adminFetch('/api/admin/categories');
       if (d.success) setCategories(d.categories || []);
-      // Also load all users for artist linking dropdown
+    } catch {}
+  };
+
+  const loadAllUsers = async () => {
+    try {
       const u = await adminFetch('/api/admin/users/all');
       if (u.success) setAllUsers(u.users || []);
+      else {
+        // fallback to paginated users
+        const u2 = await adminFetch('/api/admin/users?limit=100');
+        if (u2.success) setAllUsers(u2.users || []);
+      }
     } catch {}
+  };
+
+  // ── Update user role ──────────────────────────────────────
+  const updateUserRole = async (userId, role) => {
+    try {
+      const d = await adminFetch(`/api/admin/users/${userId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ role }),
+      });
+      if (!d.success) throw new Error(d.message);
+      showToast(`User role updated to ${role}`, 'success');
+      setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, role } : u));
+    } catch (e) { showToast(e.message, 'error'); }
   };
 
   // ── Product CRUD ──────────────────────────────────────────
@@ -413,7 +518,7 @@ export default function Admin() {
       );
       if (!d.success) throw new Error(d.message);
       showToast(isEdit ? 'Artist updated ✓' : 'Artist added ✓', 'success');
-      setArtistModal(null); loadArtists();
+      setArtistModal(null); loadArtists(); loadAllUsers();
     } catch (e) { showToast(e.message, 'error'); }
   };
 
@@ -432,7 +537,10 @@ export default function Admin() {
   // ── Order status update ───────────────────────────────────
   const updateStatus = async (orderId, status) => {
     try {
-      const d = await adminFetch(`/api/orders/${orderId}/status`, { method:'PUT', body: JSON.stringify({ status, description: `Status updated to ${status}` }) });
+      const d = await adminFetch(`/api/orders/${orderId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status, description: `Status updated to ${status}` }),
+      });
       if (!d.success) throw new Error(d.message);
       showToast('Status updated ✓', 'success');
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
@@ -440,38 +548,36 @@ export default function Admin() {
   };
 
   const maxRev = Math.max(...monthly.map(m => Number(m.revenue) || 0), 1);
+
   const sideItems = [
-    { key:'dashboard', label:'Dashboard'  },
-    { key:'products',  label:'Artworks'   },
-    { key:'artists',   label:'Artists'    },
-    { key:'orders',    label:'Orders'     },
+    { key:'dashboard', label:'Dashboard' },
+    { key:'products',  label:'Artworks'  },
+    { key:'artists',   label:'Artists'   },
+    { key:'orders',    label:'Orders'    },
+    { key:'users',     label:'Users'     },
   ];
 
   return (
     <>
       <Cursor />
 
-      {/* Modals */}
       {confirm && <Confirm msg={confirm.msg} onOk={confirm.onOk} onCancel={() => setConfirm(null)} />}
       {productModal !== null && (
         <ProductModal
           product={typeof productModal === 'object' ? productModal : null}
-          artists={artists}
-          categories={categories}
-          onSave={saveProduct}
-          onClose={() => setProductModal(null)}
+          artists={artists} categories={categories}
+          onSave={saveProduct} onClose={() => setProductModal(null)}
         />
       )}
       {artistModal !== null && (
         <ArtistModal
           artist={typeof artistModal === 'object' ? artistModal : null}
           users={allUsers}
-          onSave={saveArtist}
-          onClose={() => setArtistModal(null)}
+          onSave={saveArtist} onClose={() => setArtistModal(null)}
         />
       )}
 
-      <div style={{ display:'flex', minHeight:'100vh', position:'relative', zIndex:1, background:'var(--surface)' }}>
+      <div style={{ display:'flex', minHeight:'100vh', background:'var(--surface)' }}>
 
         {/* ── Sidebar ── */}
         <aside style={{ width:'210px', flexShrink:0, background:'var(--surface2)', borderRight:'.5px solid var(--border)', display:'flex', flexDirection:'column', position:'sticky', top:0, height:'100vh', zIndex:10 }}>
@@ -481,7 +587,6 @@ export default function Admin() {
             </Link>
             <span style={{ fontSize:'.48rem', letterSpacing:'.22em', textTransform:'uppercase', color:'var(--gold3)', border:'.5px solid var(--border)', padding:'.18rem .55rem', display:'inline-block' }}>Admin Panel</span>
           </div>
-
           <nav style={{ flex:1, padding:'.8rem 0' }}>
             {sideItems.map(item => (
               <button key={item.key} onClick={() => setTab(item.key)}
@@ -499,7 +604,6 @@ export default function Admin() {
               ← Back to Site
             </Link>
           </nav>
-
           <div style={{ padding:'1.2rem 1.4rem', borderTop:'.5px solid var(--border)', display:'flex', alignItems:'center', gap:'.8rem' }}>
             <div style={{ width:'30px', height:'30px', border:'.5px solid var(--border2)', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Cormorant Garamond',serif", fontSize:'.75rem', color:'var(--gold)', flexShrink:0 }}>
               {user?.name?.[0] || 'A'}
@@ -519,7 +623,7 @@ export default function Admin() {
             <>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'2rem', paddingBottom:'1.5rem', borderBottom:'.5px solid var(--border)' }}>
                 <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.8rem', fontWeight:300, color:'var(--cream)' }}>
-                  Dashboard <em style={{ fontStyle:'italic', color:'var(--gold)' }}>Overview</em>
+                  Dashboard <em style={{ color:'var(--gold)' }}>Overview</em>
                 </h1>
                 <div style={{ display:'flex', gap:'.6rem' }}>
                   <button onClick={() => { setTab('products'); setTimeout(() => setProductModal('add'), 200); }}
@@ -541,7 +645,7 @@ export default function Admin() {
                   ['Artworks',      stats?.total_products ?? '—'],
                   ['Collectors',    stats?.total_users ?? '—'],
                 ].map(([label, val]) => (
-                  <div key={label} style={{ background:'var(--surface2)', padding:'1.5rem 1.4rem', transition:'background .3s' }}
+                  <div key={label} style={{ background:'var(--surface2)', padding:'1.5rem 1.4rem' }}
                     onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
                     onMouseLeave={e=>e.currentTarget.style.background='var(--surface2)'}>
                     <div style={{ fontSize:'.52rem', letterSpacing:'.24em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'.6rem' }}>{label}</div>
@@ -554,8 +658,8 @@ export default function Admin() {
               <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)', padding:'1.5rem', marginBottom:'2rem' }}>
                 <div style={{ fontSize:'.58rem', letterSpacing:'.22em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'1rem' }}>Monthly Revenue</div>
                 {monthly.length === 0 ? (
-                  <div style={{ height:'90px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'.65rem', letterSpacing:'.14em', color:'var(--muted2)' }}>
-                    No revenue data yet — chart will appear once orders are placed
+                  <div style={{ height:'90px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'.65rem', color:'var(--muted2)' }}>
+                    No revenue data yet
                   </div>
                 ) : (
                   <div style={{ display:'flex', alignItems:'flex-end', gap:'.4rem', height:'90px' }}>
@@ -572,11 +676,11 @@ export default function Admin() {
                 )}
               </div>
 
-              {/* Orders table */}
+              {/* Recent orders */}
               <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)' }}>
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'1.2rem 1.4rem', borderBottom:'.5px solid var(--border)' }}>
                   <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.1rem', color:'var(--cream)' }}>Recent Orders</div>
-                  <button onClick={() => setTab('orders')} style={{ fontSize:'.54rem', letterSpacing:'.16em', textTransform:'uppercase', color:'var(--muted)', background:'none', border:'none', cursor:'none', transition:'color .3s' }}
+                  <button onClick={() => setTab('orders')} style={{ fontSize:'.54rem', letterSpacing:'.16em', textTransform:'uppercase', color:'var(--muted)', background:'none', border:'none', cursor:'none' }}
                     onMouseEnter={e=>e.target.style.color='var(--gold)'} onMouseLeave={e=>e.target.style.color='var(--muted)'}>View All →</button>
                 </div>
                 <div style={{ overflowX:'auto' }}>
@@ -585,15 +689,11 @@ export default function Admin() {
                     <tbody>
                       {orders.length === 0 && <tr><td colSpan={5} style={{ ...td, textAlign:'center', color:'var(--muted)', padding:'2rem' }}>No orders yet</td></tr>}
                       {orders.map(o => (
-                        <tr key={o.id} style={{ transition:'background .2s' }}
-                          onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
-                          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <tr key={o.id} onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                           <td style={td}><span style={{ fontFamily:"'Cormorant Garamond',serif", color:'var(--cream)' }}>#{o.order_number}</span></td>
                           <td style={td}>{o.collector_name}</td>
                           <td style={{ ...td, fontFamily:"'Cormorant Garamond',serif", color:'var(--gold)' }}>₹ {Number(o.total_amount).toLocaleString()}</td>
-                          <td style={td}>
-                            <span style={{ fontSize:'.5rem', letterSpacing:'.14em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid', color:STATUS_COLOR[o.status]||'var(--muted)', borderColor:`${STATUS_COLOR[o.status]||'var(--muted)'}55` }}>{o.status}</span>
-                          </td>
+                          <td style={td}><span style={{ fontSize:'.5rem', letterSpacing:'.14em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid', color:STATUS_COLOR[o.status]||'var(--muted)', borderColor:`${STATUS_COLOR[o.status]||'var(--muted)'}55` }}>{o.status}</span></td>
                           <td style={td}>
                             <select value={o.status} onChange={e => updateStatus(o.id, e.target.value)}
                               style={{ background:'var(--surface3)', border:'.5px solid var(--border2)', color:'var(--cream)', fontSize:'.58rem', padding:'.3rem .5rem', cursor:'none', fontFamily:"'Josefin Sans',sans-serif", outline:'none' }}>
@@ -614,23 +714,21 @@ export default function Admin() {
             <>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1.5rem', paddingBottom:'1.5rem', borderBottom:'.5px solid var(--border)' }}>
                 <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.8rem', fontWeight:300, color:'var(--cream)' }}>
-                  Artworks <em style={{ fontStyle:'italic', color:'var(--gold)' }}>Management</em>
+                  Artworks <em style={{ color:'var(--gold)' }}>Management</em>
                 </h1>
                 <button onClick={() => setProductModal('add')} style={goldBtn}
                   onMouseEnter={e=>e.currentTarget.style.background='var(--gold2)'} onMouseLeave={e=>e.currentTarget.style.background='var(--gold)'}>
                   + Add Artwork
                 </button>
               </div>
-
               <div style={{ display:'flex', marginBottom:'1.5rem', border:'.5px solid var(--border2)', maxWidth:'380px' }}>
                 <input value={prodSearch} onChange={e => setProdSearch(e.target.value)}
                   onKeyDown={e => e.key==='Enter' && loadProducts()}
                   placeholder="Search artworks…" style={{ ...inp, border:'none', flex:1 }} />
                 <button onClick={loadProducts} style={{ ...goldBtn, padding:'.65rem 1rem' }}>Search</button>
               </div>
-
               {loading ? (
-                <div style={{ color:'var(--muted)', fontSize:'.65rem', letterSpacing:'.14em', padding:'3rem 0' }}>Loading artworks…</div>
+                <div style={{ color:'var(--muted)', fontSize:'.65rem', padding:'3rem 0' }}>Loading artworks…</div>
               ) : (
                 <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)', overflowX:'auto' }}>
                   <table style={{ width:'100%', borderCollapse:'collapse' }}>
@@ -638,12 +736,16 @@ export default function Admin() {
                     <tbody>
                       {products.length === 0 && <tr><td colSpan={7} style={{ ...td, textAlign:'center', color:'var(--muted)', padding:'3rem' }}>No artworks found</td></tr>}
                       {products.map(p => (
-                        <tr key={p.id} style={{ transition:'background .2s', opacity: p.is_active ? 1 : 0.55 }}
+                        <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.55 }}
                           onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
                           onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                           <td style={td}>
                             <div style={{ display:'flex', alignItems:'center', gap:'.8rem' }}>
-                              <div className={getBgClass(p.id)} style={{ width:'34px', height:'34px', flexShrink:0 }} />
+                              {p.image_url ? (
+                                <div style={{ width:'34px', height:'34px', backgroundImage:`url(${p.image_url})`, backgroundSize:'cover', backgroundPosition:'center', border:'.5px solid var(--border2)', flexShrink:0 }} />
+                              ) : (
+                                <div className={getBgClass(p.id)} style={{ width:'34px', height:'34px', flexShrink:0 }} />
+                              )}
                               <div>
                                 <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'.9rem', color:'var(--cream)' }}>{p.title}</div>
                                 {p.tag && <span style={{ fontSize:'.48rem', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--gold3)' }}>{p.tag}</span>}
@@ -682,40 +784,38 @@ export default function Admin() {
             <>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1.5rem', paddingBottom:'1.5rem', borderBottom:'.5px solid var(--border)' }}>
                 <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.8rem', fontWeight:300, color:'var(--cream)' }}>
-                  Artists <em style={{ fontStyle:'italic', color:'var(--gold)' }}>Management</em>
+                  Artists <em style={{ color:'var(--gold)' }}>Management</em>
                 </h1>
                 <button onClick={() => setArtistModal('add')} style={goldBtn}
                   onMouseEnter={e=>e.currentTarget.style.background='var(--gold2)'} onMouseLeave={e=>e.currentTarget.style.background='var(--gold)'}>
                   + Add Artist
                 </button>
               </div>
-
               <div style={{ display:'flex', marginBottom:'1.5rem', border:'.5px solid var(--border2)', maxWidth:'380px' }}>
                 <input value={artSearch} onChange={e => setArtSearch(e.target.value)}
                   onKeyDown={e => e.key==='Enter' && loadArtists()}
                   placeholder="Search artists…" style={{ ...inp, border:'none', flex:1 }} />
                 <button onClick={loadArtists} style={{ ...goldBtn, padding:'.65rem 1rem' }}>Search</button>
               </div>
-
               {loading ? (
-                <div style={{ color:'var(--muted)', fontSize:'.65rem', letterSpacing:'.14em', padding:'3rem 0' }}>Loading artists…</div>
+                <div style={{ color:'var(--muted)', fontSize:'.65rem', padding:'3rem 0' }}>Loading artists…</div>
               ) : (
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:'1px', background:'#1a1712' }}>
-                  {artists.length === 0 && <div style={{ gridColumn:'1/-1', textAlign:'center', padding:'4rem', background:'var(--surface2)', color:'var(--muted)', fontSize:'.65rem', letterSpacing:'.14em' }}>No artists found</div>}
+                  {artists.length === 0 && <div style={{ gridColumn:'1/-1', textAlign:'center', padding:'4rem', background:'var(--surface2)', color:'var(--muted)', fontSize:'.65rem' }}>No artists found</div>}
                   {artists.map(a => (
-                    <div key={a.id} style={{ background:'var(--surface2)', padding:'1.5rem', transition:'background .3s' }}
+                    <div key={a.id} style={{ background:'var(--surface2)', padding:'1.5rem' }}
                       onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
                       onMouseLeave={e=>e.currentTarget.style.background='var(--surface2)'}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'1px', background:'#1a1712', marginBottom:'.8rem' }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:'.8rem', marginBottom:'.8rem' }}>
                         <div style={{ width:'42px', height:'42px', border:'.5px solid var(--border2)', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Cormorant Garamond',serif", fontSize:'.95rem', color:'var(--gold)', flexShrink:0 }}>
                           {a.name.split(' ').map(w=>w[0]).join('').slice(0,2)}
                         </div>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1rem', color:'var(--cream)', marginBottom:'.1rem' }}>{a.name}</div>
+                        <div>
+                          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1rem', color:'var(--cream)' }}>{a.name}</div>
                           <div style={{ fontSize:'.54rem', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--muted)' }}>{a.location || 'India'}</div>
                         </div>
                       </div>
-                      {a.bio && <p style={{ fontSize:'.65rem', color:'var(--muted)', lineHeight:1.65, marginBottom:'1rem', letterSpacing:'.04em' }}>{a.bio.slice(0,100)}{a.bio.length>100?'…':''}</p>}
+                      {a.bio && <p style={{ fontSize:'.65rem', color:'var(--muted)', lineHeight:1.65, marginBottom:'1rem' }}>{a.bio.slice(0,100)}{a.bio.length>100?'…':''}</p>}
                       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingTop:'.8rem', borderTop:'.5px solid var(--border)' }}>
                         <span style={{ fontSize:'.54rem', letterSpacing:'.12em', textTransform:'uppercase', color:'var(--gold3)' }}>{a.product_count||0} artwork{a.product_count!==1?'s':''}</span>
                         <div>
@@ -735,7 +835,7 @@ export default function Admin() {
             <>
               <div style={{ marginBottom:'1.5rem', paddingBottom:'1.5rem', borderBottom:'.5px solid var(--border)' }}>
                 <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.8rem', fontWeight:300, color:'var(--cream)' }}>
-                  All <em style={{ fontStyle:'italic', color:'var(--gold)' }}>Orders</em>
+                  All <em style={{ color:'var(--gold)' }}>Orders</em>
                 </h1>
               </div>
               <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)', overflowX:'auto' }}>
@@ -744,7 +844,7 @@ export default function Admin() {
                   <tbody>
                     {orders.length === 0 && <tr><td colSpan={7} style={{ ...td, textAlign:'center', color:'var(--muted)', padding:'3rem' }}>No orders yet</td></tr>}
                     {orders.map(o => (
-                      <tr key={o.id} style={{ transition:'background .2s' }}
+                      <tr key={o.id}
                         onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
                         onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                         <td style={{ ...td, fontFamily:"'Cormorant Garamond',serif", color:'var(--cream)' }}>#{o.order_number}</td>
@@ -752,14 +852,90 @@ export default function Admin() {
                         <td style={{ ...td, color:'var(--muted)' }}>{o.collector_email}</td>
                         <td style={{ ...td, fontFamily:"'Cormorant Garamond',serif", color:'var(--gold)' }}>₹ {Number(o.total_amount).toLocaleString()}</td>
                         <td style={td}>{new Date(o.placed_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</td>
-                        <td style={td}>
-                          <span style={{ fontSize:'.5rem', letterSpacing:'.14em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid', color:STATUS_COLOR[o.status]||'var(--muted)', borderColor:`${STATUS_COLOR[o.status]||'var(--muted)'}55` }}>{o.status}</span>
-                        </td>
+                        <td style={td}><span style={{ fontSize:'.5rem', letterSpacing:'.14em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid', color:STATUS_COLOR[o.status]||'var(--muted)', borderColor:`${STATUS_COLOR[o.status]||'var(--muted)'}55` }}>{o.status}</span></td>
                         <td style={td}>
                           <select value={o.status} onChange={e => updateStatus(o.id, e.target.value)}
                             style={{ background:'var(--surface3)', border:'.5px solid var(--border2)', color:'var(--cream)', fontSize:'.58rem', padding:'.3rem .5rem', cursor:'none', fontFamily:"'Josefin Sans',sans-serif", outline:'none' }}>
                             {STATUS_OPTS.map(s => <option key={s} value={s} style={{ background:'var(--surface2)' }}>{s}</option>)}
                           </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* ══ USERS ══ */}
+          {tab === 'users' && (
+            <>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1.5rem', paddingBottom:'1.5rem', borderBottom:'.5px solid var(--border)' }}>
+                <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.8rem', fontWeight:300, color:'var(--cream)' }}>
+                  All <em style={{ color:'var(--gold)' }}>Users</em>
+                </h1>
+                <span style={{ fontSize:'.58rem', letterSpacing:'.16em', textTransform:'uppercase', color:'var(--muted)' }}>
+                  {allUsers.length} registered users
+                </span>
+              </div>
+
+              {/* Role legend */}
+              <div style={{ display:'flex', gap:'1rem', marginBottom:'1.5rem' }}>
+                {[['collector','var(--muted)'],['artist','var(--gold3)'],['admin','#4a8c5c']].map(([role, color]) => (
+                  <div key={role} style={{ display:'flex', alignItems:'center', gap:'.4rem' }}>
+                    <div style={{ width:'8px', height:'8px', borderRadius:'50%', background:color }} />
+                    <span style={{ fontSize:'.54rem', letterSpacing:'.14em', textTransform:'uppercase', color:'var(--muted)' }}>{role}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)', overflowX:'auto' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                  <thead>
+                    <tr>{['User','Email','Role','Joined','Change Role'].map(h=><th key={h} style={th}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {allUsers.length === 0 && (
+                      <tr><td colSpan={5} style={{ ...td, textAlign:'center', color:'var(--muted)', padding:'3rem' }}>
+                        No users found — check if /api/admin/users/all is working
+                      </td></tr>
+                    )}
+                    {allUsers.map(u => (
+                      <tr key={u.id}
+                        onMouseEnter={e=>e.currentTarget.style.background='var(--surface3)'}
+                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <td style={td}>
+                          <div style={{ display:'flex', alignItems:'center', gap:'.8rem' }}>
+                            <div style={{ width:'32px', height:'32px', borderRadius:'50%', border:'.5px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Cormorant Garamond',serif", fontSize:'.75rem', color:'var(--gold)', flexShrink:0 }}>
+                              {u.name?.[0]?.toUpperCase() || '?'}
+                            </div>
+                            <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'.95rem', color:'var(--cream)' }}>{u.name}</span>
+                          </div>
+                        </td>
+                        <td style={{ ...td, color:'var(--muted)' }}>{u.email}</td>
+                        <td style={td}>
+                          <span style={{ fontSize:'.5rem', letterSpacing:'.14em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid',
+                            color: u.role==='admin' ? '#4a8c5c' : u.role==='artist' ? 'var(--gold3)' : 'var(--muted)',
+                            borderColor: u.role==='admin' ? 'rgba(74,140,92,.4)' : u.role==='artist' ? 'rgba(201,168,76,.3)' : 'var(--border)',
+                          }}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td style={{ ...td, color:'var(--muted)' }}>
+                          {u.created_at ? new Date(u.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '—'}
+                        </td>
+                        <td style={td}>
+                          {u.role !== 'admin' ? (
+                            <select
+                              value={u.role}
+                              onChange={e => updateUserRole(u.id, e.target.value)}
+                              style={{ background:'var(--surface3)', border:'.5px solid var(--border2)', color:'var(--cream)', fontSize:'.58rem', padding:'.3rem .5rem', cursor:'none', fontFamily:"'Josefin Sans',sans-serif", outline:'none' }}>
+                              <option value="collector" style={{ background:'var(--surface2)' }}>collector</option>
+                              <option value="artist"    style={{ background:'var(--surface2)' }}>artist</option>
+                            </select>
+                          ) : (
+                            <span style={{ fontSize:'.52rem', letterSpacing:'.1em', color:'var(--muted2)' }}>Admin — protected</span>
+                          )}
                         </td>
                       </tr>
                     ))}

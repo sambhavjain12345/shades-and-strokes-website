@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "description": "Backend API for Shades & Strokes 2.0 — Fine Art eCommerce",
   "main": "server.js",
-"scripts": {
+  "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "db:init": "node utils/initDB.js",
     "db:seed": "node utils/seedDB.js",
     "db:migrate": "node utils/migrate.js"
-},
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.18.3",

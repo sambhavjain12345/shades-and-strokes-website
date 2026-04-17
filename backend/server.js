@@ -1,6 +1,5 @@
 // ============================================================
 //  Shades & Strokes 2.0 — Express Server
-//  Start: npm run dev  |  Production: npm start
 // ============================================================
 require('dotenv').config();
 
@@ -14,25 +13,23 @@ const path        = require('path');
 const authRoutes    = require('./routes/auth');
 const productRoutes = require('./routes/products');
 const artistRoutes  = require('./routes/artist');
+const uploadRoutes  = require('./routes/upload');
 const { cartRouter, wishRouter, orderRouter, adminRouter } = require('./routes/index');
 const { errorHandler } = require('./middleware/error');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-// ── Global error handlers — prevent full server crash ─────────
+// ── Global error handlers ─────────────────────────────────────
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err.message);
   console.error(err.stack);
 });
-
 process.on('unhandledRejection', (reason) => {
   console.error('❌ Unhandled Promise Rejection:', reason);
 });
 
-// ── Trust proxy — REQUIRED for Railway/Render/Heroku ─────────
-// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
-// and all requests fail
+// ── Trust proxy — REQUIRED for Railway ───────────────────────
 app.set('trust proxy', 1);
 
 // ── Security ──────────────────────────────────────────────────
@@ -40,23 +37,17 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── CORS ─────────────────────────────────────────────────────
 const allowedOrigins = [
-  // Local development
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:4173',
-  // Production — set CLIENT_URL in Railway env variables
   process.env.CLIENT_URL,
-].filter(Boolean); // remove any undefined values
+].filter(Boolean);
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return cb(null, true);
-    // Allow any vercel.app subdomain automatically
-    if (origin.endsWith('.vercel.app')) return cb(null, true);
-    // Allow any railway.app subdomain automatically
+    if (origin.endsWith('.vercel.app'))  return cb(null, true);
     if (origin.endsWith('.railway.app')) return cb(null, true);
-    // Check against allowed origins list
     if (allowedOrigins.includes(origin)) return cb(null, true);
     cb(new Error(`CORS blocked: ${origin}`));
   },
@@ -65,18 +56,14 @@ app.use(cors({
 
 // ── Rate limiting ─────────────────────────────────────────────
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
+  windowMs: 15 * 60 * 1000, max: 200,
   message: { success: false, message: 'Too many requests' },
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, legacyHeaders: false,
 });
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: 15 * 60 * 1000, max: 20,
   message: { success: false, message: 'Too many login attempts' },
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, legacyHeaders: false,
 });
 app.use('/api/', limiter);
 app.use('/api/auth/login',    authLimiter);
@@ -95,10 +82,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ── Health check ──────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({
-    success: true,
-    message: 'Shades & Strokes API is running',
-    version: '2.0.0',
-    env: process.env.NODE_ENV,
+    success: true, message: 'Shades & Strokes API is running',
+    version: '2.0.0', env: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
   });
 });
@@ -107,6 +92,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth',     authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/artist',   artistRoutes);
+app.use('/api/upload',   uploadRoutes);   // ← Cloudinary image upload
 app.use('/api/cart',     cartRouter);
 app.use('/api/wishlist', wishRouter);
 app.use('/api/orders',   orderRouter);
