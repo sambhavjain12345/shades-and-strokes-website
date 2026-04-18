@@ -5,8 +5,10 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import Cursor from '../components/common/Cursor';
 
+// VITE_API_URL is the full API base e.g. "https://backend.railway.app/api"
+// For direct fetch calls we need the root URL (without /api)
 const API_BASE = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace('/api', '')
+  ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
   : '';
 
 // ── API helper ────────────────────────────────────────────────

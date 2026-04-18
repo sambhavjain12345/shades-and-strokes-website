@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ProductsAPI } from '../services/api';
+import { ProductsAPI, CartAPI, WishlistAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../hooks/useToast';
@@ -146,7 +146,8 @@ export default function Home() {
 
   /* Load real stats from public API */
   useEffect(() => {
-    fetch('/api/products/stats/public')
+    const apiBase = import.meta.env.VITE_API_URL || '/api';
+    fetch(`${apiBase}/products/stats/public`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {

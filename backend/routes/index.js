@@ -42,8 +42,8 @@ const adminCtrl   = require('../controllers/adminController');
 
 adminRouter.use(protect, authorize('admin'));
 adminRouter.get('/stats',                    adminCtrl.getDashboardStats);
+adminRouter.get('/users/all',                adminCtrl.getAllUsers);  // ← MUST be before /users/:id
 adminRouter.get('/users',                    adminCtrl.getUsers);
-adminRouter.get('/users/all',                adminCtrl.getAllUsers);
 adminRouter.put('/users/:id',                adminCtrl.updateUser);
 adminRouter.get('/orders',                   adminCtrl.getAllOrders);
 

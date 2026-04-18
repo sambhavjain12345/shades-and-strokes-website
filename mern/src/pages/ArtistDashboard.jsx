@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArtistAPI, getBgClass, getProductImageStyle } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +32,95 @@ function Confirm({ msg, onOk, onCancel }) {
   );
 }
 
+// ── Upload image to Cloudinary via backend ────────────────────
+const uploadImage = async (file) => {
+  const token = localStorage.getItem('ss_token');
+  const apiBase = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+    : '';
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch(`${apiBase}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Upload failed');
+  return data.url;
+};
+
+// ── Image Uploader Component ──────────────────────────────────
+function ImageUploader({ value, onChange }) {
+  const fileRef = useRef();
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver]   = useState(false);
+
+  const handleFile = async (file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file);
+      onChange(url);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      <label style={lbl}>
+        Artwork Image
+        <span style={{ color:'var(--muted2)', fontSize:'.46rem', marginLeft:'.5rem', textTransform:'none', letterSpacing:0 }}>
+          — upload a file OR paste a URL below
+        </span>
+      </label>
+      <div
+        onClick={() => !uploading && fileRef.current.click()}
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+        style={{
+          border: `.5px dashed ${dragOver ? 'var(--gold)' : 'var(--border2)'}`,
+          background: dragOver ? 'rgba(201,168,76,.06)' : 'rgba(201,168,76,.02)',
+          padding: '1.2rem', textAlign: 'center',
+          cursor: uploading ? 'not-allowed' : 'pointer',
+          transition: 'all .3s', marginBottom: '.8rem',
+        }}>
+        {uploading ? (
+          <div style={{ fontSize:'.62rem', letterSpacing:'.14em', color:'var(--gold3)' }}>⏳ Uploading to Cloudinary…</div>
+        ) : (
+          <>
+            <div style={{ fontSize:'1.4rem', marginBottom:'.4rem' }}>📁</div>
+            <div style={{ fontSize:'.6rem', letterSpacing:'.14em', color:'var(--muted)' }}>Click to browse or drag & drop</div>
+            <div style={{ fontSize:'.52rem', letterSpacing:'.1em', color:'var(--muted2)', marginTop:'.3rem' }}>JPG, PNG, WEBP — max 5MB</div>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" style={{ display:'none' }}
+          onChange={e => handleFile(e.target.files[0])} />
+      </div>
+      <input
+        style={inp} value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Or paste image URL: https://res.cloudinary.com/..."
+        onFocus={e => e.target.style.borderColor = 'var(--gold)'}
+        onBlur={e => e.target.style.borderColor = 'var(--border2)'}
+      />
+      {value && (
+        <div style={{ marginTop:'.6rem', position:'relative' }}>
+          <div style={{ width:'100%', height:'140px', backgroundImage:`url(${value})`, backgroundSize:'cover', backgroundPosition:'center', border:'.5px solid var(--border2)' }} />
+          <button type="button" onClick={() => onChange('')}
+            style={{ position:'absolute', top:'.4rem', right:'.4rem', background:'rgba(192,80,80,.85)', color:'#fff', border:'none', padding:'.3rem .7rem', cursor:'pointer', fontSize:'.5rem', letterSpacing:'.12em', textTransform:'uppercase' }}>
+            ✕ Remove
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Artwork Form Modal ────────────────────────────────────────
 function ArtworkModal({ artwork, categories, onSave, onClose }) {
   const [form, setForm] = useState({
@@ -55,15 +144,9 @@ function ArtworkModal({ artwork, categories, onSave, onClose }) {
           {artwork ? 'Edit Artwork' : 'Add New Artwork'}
         </div>
 
-        {/* Image URL with live preview */}
+        {/* Image upload with Cloudinary support */}
         <div style={{ marginBottom:'1.2rem' }}>
-          <label style={lbl}>Image URL <span style={{ color:'var(--muted2)', fontSize:'.48rem' }}>(paste any image link)</span></label>
-          <input style={inp} value={form.image_url} onChange={e => set('image_url', e.target.value)}
-            placeholder="https://images.unsplash.com/photo-..."
-            onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-          {form.image_url && (
-            <div style={{ marginTop:'.6rem', height:'160px', backgroundImage:`url(${form.image_url})`, backgroundSize:'cover', backgroundPosition:'center', border:'.5px solid var(--border2)' }} />
-          )}
+          <ImageUploader value={form.image_url} onChange={v => set('image_url', v)} />
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1.2rem 1.6rem' }}>
