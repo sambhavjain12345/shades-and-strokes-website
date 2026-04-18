@@ -475,7 +475,11 @@ export function Profile() {
   }, [user]);
 
   const save = async (e) => {
-    e.preventDefault(); setSaving(true);
+    e.preventDefault();
+    if (form.phone && form.phone.replace(/\D/g, '').length < 10) {
+      showToast('Phone number must be at least 10 digits', 'error'); return;
+    }
+    setSaving(true);
     try {
       await AuthAPI.updateProfile({ name:form.name, phone:form.phone, address:form.address });
       updateUser({ name:form.name, phone:form.phone, address:form.address });
@@ -521,7 +525,7 @@ export function Profile() {
             <h1 className="page-title">Collector <em>Profile</em></h1>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'1px', background:'var(--border)', marginBottom:'2.5rem' }}>
-            {[[orderCount,'Orders Placed'],[wishCount,'Saved Works'],['2024','Member Since']].map(([v,l])=>(
+            {[[orderCount,'Orders Placed'],[wishCount,'Saved Works'],[user?.created_at ? new Date(user.created_at).getFullYear() : '—','Member Since']].map(([v,l])=>(
               <div key={l} style={{ background:'var(--surface2)', padding:'1.5rem 1.8rem', textAlign:'center' }}>
                 <span style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'2.2rem', fontWeight:300, color:'var(--gold)', display:'block', lineHeight:1 }}>{v}</span>
                 <span style={{ fontSize:'.54rem', letterSpacing:'.2em', textTransform:'uppercase', color:'var(--muted)', marginTop:'.4rem', display:'block' }}>{l}</span>
@@ -534,6 +538,7 @@ export function Profile() {
                 <div key={key}>
                   <label style={{ fontSize:'.54rem', letterSpacing:'.26em', textTransform:'uppercase', color:'var(--muted)', display:'block', marginBottom:'.6rem' }}>{label}</label>
                   <input value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))} type={type} disabled={key==='email'}
+                    {...(key==='phone' ? { maxLength:10, pattern:'[0-9]{10}', title:'Enter a valid 10-digit phone number' } : {})}
                     style={{ width:'100%', background:'transparent', border:'none', borderBottom:'.5px solid var(--border2)', outline:'none', padding:'.7rem 0', fontFamily:'Josefin Sans,sans-serif', fontSize:'.78rem', fontWeight:300, letterSpacing:'.1em', color: key==='email'?'var(--muted)':'var(--cream)', caretColor:'var(--gold)', transition:'border-color .3s' }} />
                 </div>
               ))}

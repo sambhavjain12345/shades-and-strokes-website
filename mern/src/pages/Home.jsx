@@ -117,14 +117,24 @@ function HomeCard({ product }) {
 
 /* ── Hero art card ───────────────────────────────────────────── */
 function HeroArtCard({ artwork, bg, isActive, onClick, small }) {
+  const hasImage = !!artwork.image_url;
   return (
     <div
       onClick={onClick}
       style={{ position:'relative', overflow:'hidden', cursor:'none', ...(small ? {} : { gridColumn:'1/3' }) }}
     >
       <div
-        className={bg}
-        style={{ position:'absolute', inset:0, transition:'transform .9s cubic-bezier(.25,.46,.45,.94)', transform: isActive ? 'scale(1.06)' : 'scale(1)' }}
+        className={hasImage ? '' : bg}
+        style={{
+          position:'absolute', inset:0,
+          transition:'transform .9s cubic-bezier(.25,.46,.45,.94)',
+          transform: isActive ? 'scale(1.06)' : 'scale(1)',
+          ...(hasImage ? {
+            backgroundImage: `url(${artwork.image_url})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          } : {})
+        }}
       />
       <div style={{ position:'absolute', inset:0, background:'linear-gradient(to top,rgba(8,7,6,.72) 0%,transparent 45%)', zIndex:1 }} />
       <div style={{ position:'absolute', top:'1.3rem', right:'1.3rem', zIndex:3, fontFamily:"'Cormorant Garamond',serif", fontSize:'.9rem', color:'var(--cream)', letterSpacing:'.06em' }}>{artwork.price}</div>
@@ -160,11 +170,19 @@ export default function Home() {
       .catch(() => {}); // keep default '...' if API fails
   }, []);
 
-  const heroArtworks = [
-    { title:'Amber Dusk',    sub:'Oil on Canvas · 2024', price:'₹ 38,000' },
-    { title:'Midnight Drift',sub:'Acrylic · 2023',        price:'₹ 24,500' },
-    { title:'Verdant Still', sub:'Watercolour · 2024',    price:'₹ 17,000' },
+  const heroArtworks = featured.slice(0, 3).map((p, i) => ({
+    title:     p.title,
+    sub:       `${p.medium || p.category_name} · ${p.year || '2024'}`,
+    price:     `₹ ${Number(p.price).toLocaleString()}`,
+    image_url: p.image_url || null,
+  }));
+  // Fallback static entries until featured loads
+  const heroFallback = [
+    { title:'Amber Dusk',    sub:'Oil on Canvas · 2024', price:'₹ 38,000', image_url: null },
+    { title:'Midnight Drift',sub:'Acrylic · 2023',        price:'₹ 24,500', image_url: null },
+    { title:'Verdant Still', sub:'Watercolour · 2024',    price:'₹ 17,000', image_url: null },
   ];
+  const heroItems = heroArtworks.length >= 3 ? heroArtworks : heroFallback;
   const heroBgs = ['bg1','bg6','bg3'];
 
   /* Auto-rotate hero artwork every 4s */
@@ -243,7 +261,7 @@ export default function Home() {
 
         {/* Right — artwork grid */}
         <div style={{ position:'relative', display:'grid', gridTemplateColumns:'1fr 1fr', gridTemplateRows:'62% 38%', gap:'1px', background:'var(--border)', zIndex:2 }}>
-          {heroArtworks.map((art, i) => (
+          {heroItems.map((art, i) => (
             <HeroArtCard
               key={i}
               artwork={art}
