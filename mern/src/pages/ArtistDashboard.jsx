@@ -248,7 +248,7 @@ export default function ArtistDashboard() {
     try {
       const [statsData, catsData] = await Promise.all([
         ArtistAPI.getStats(),
-        fetch('/api/products/categories').then(r => r.json()).catch(() => ({ categories: [] })),
+        fetch(`${import.meta.env.VITE_API_URL || '/api'}/products/categories`).then(r => r.json()).catch(() => ({ categories: [] })),
       ]);
       if (statsData.success) {
         setStats(statsData.stats);
