@@ -6,6 +6,13 @@ const appUrl=()=>(process.env.CLIENT_URL||'http://localhost:5173').replace(/\/$/
 const mailer=()=>{if(transporter)return transporter;if(!process.env.SMTP_HOST||!process.env.SMTP_USER||!process.env.SMTP_PASS)return null;transporter=nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:String(process.env.SMTP_SECURE||'false')==='true',auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}});return transporter;};
 const frame=(title,body)=>`<!doctype html><html><body style="margin:0;background:#0b0908;color:#eee5d4;font-family:Arial,sans-serif"><div style="max-width:680px;margin:auto;padding:36px"><div style="color:#c9a84c;letter-spacing:4px;font-size:12px">SHADES &amp; STROKES</div><h1 style="font-family:Georgia,serif;font-weight:normal;font-size:32px">${esc(title)}</h1>${body}<p style="margin-top:36px;border-top:1px solid #453b28;padding-top:20px;color:#948b7e;font-size:12px">Thank you for collecting art with Shades &amp; Strokes.</p></div></body></html>`;
 const send=async({to,subject,html})=>{
+  if(process.env.BREVO_API_KEY){
+    const from=String(process.env.EMAIL_FROM||process.env.SMTP_USER||'').match(/^(.*?)\s*<([^>]+)>$/);
+    const sender=from?{name:from[1].trim().replace(/^"|"$/g,''),email:from[2]}:{name:'Shades & Strokes',email:process.env.EMAIL_FROM||process.env.SMTP_USER};
+    const response=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':process.env.BREVO_API_KEY,'Content-Type':'application/json','accept':'application/json'},body:JSON.stringify({sender,to:[{email:to}],subject,htmlContent:html})});
+    if(!response.ok){const details=await response.text();throw new Error(`Brevo rejected the message (${response.status}): ${details.slice(0,300)}`);}
+    return true;
+  }
   if(process.env.RESEND_API_KEY){
     const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:process.env.EMAIL_FROM,to:[to],subject,html})});
     if(!response.ok){const details=await response.text();throw new Error(`Email API rejected the message (${response.status}): ${details.slice(0,300)}`);}
