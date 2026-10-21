@@ -39,9 +39,10 @@ exports.getProductAuction=asyncHandler(async(req,res)=>{
   if(!lookup)return res.status(404).json({success:false,message:'Auction not found'});
   await refreshAuctionById(lookup.id);
   const [[auction]]=await pool.query(
-    `SELECT a.*,winner.name AS winner_name,activeBuyer.name AS active_buyer_name,
+    `SELECT a.*,ar.user_id AS artist_user_id,winner.name AS winner_name,activeBuyer.name AS active_buyer_name,
        (SELECT COUNT(*) FROM bids b WHERE b.auction_id=a.id) AS bid_count
-     FROM auctions a LEFT JOIN users winner ON a.winner_user_id=winner.id
+     FROM auctions a JOIN products p ON p.id=a.product_id JOIN artists ar ON ar.id=p.artist_id
+     LEFT JOIN users winner ON a.winner_user_id=winner.id
      LEFT JOIN users activeBuyer ON a.active_buyer_user_id=activeBuyer.id WHERE a.product_id=?`,[req.params.productId]);
   const [bidRows]=await pool.query(
     `SELECT b.id,b.amount,b.created_at,b.user_id,u.name FROM bids b JOIN users u ON b.user_id=u.id
@@ -50,7 +51,7 @@ exports.getProductAuction=asyncHandler(async(req,res)=>{
   let myDeposit=null;
   let myCandidate=null;
   if(currentUserId){
-    [[myDeposit]]=await pool.query('SELECT amount,status,held_at,updated_at FROM auction_deposits WHERE auction_id=? AND user_id=?',[auction.id,currentUserId]);
+    [[myDeposit]]=await pool.query('SELECT amount,status,payment_status,held_at,updated_at FROM auction_deposits WHERE auction_id=? AND user_id=?',[auction.id,currentUserId]);
     [[myCandidate]]=await pool.query('SELECT bidder_rank,final_bid,status,payment_due_at FROM auction_settlement_candidates WHERE auction_id=? AND user_id=?',[auction.id,currentUserId]);
   }
   res.json({success:true,auction:{
@@ -62,6 +63,10 @@ exports.getProductAuction=asyncHandler(async(req,res)=>{
     active_offer:{is_me:Boolean(currentUserId&&auction.active_buyer_user_id===currentUserId),bidder:auction.active_buyer_user_id?maskBidderName(auction.active_buyer_name):null},
     bid_count:auction.bid_count,winner:auction.winner_user_id?{bidder:maskBidderName(auction.winner_name),is_me:Boolean(currentUserId&&auction.winner_user_id===currentUserId)}:null,
     my_deposit:myDeposit||null,my_candidate:myCandidate||null,
+    bidding_eligibility:{
+      allowed:Boolean(currentUserId&&req.user.role!=='admin'&&auction.artist_user_id!==currentUserId),
+      reason:!currentUserId?'SIGN_IN_REQUIRED':req.user.role==='admin'?'ADMIN_ACCOUNT':auction.artist_user_id===currentUserId?'OWN_ARTWORK':null,
+    },
     bids:bidRows.map(bid=>({id:bid.id,amount:bid.amount,created_at:bid.created_at,bidder:maskBidderName(bid.name),is_mine:Boolean(currentUserId&&bid.user_id===currentUserId)})),
   }});
 });
@@ -82,7 +87,7 @@ exports.holdDeposit=asyncHandler(async(req,res)=>{
     }
     if(!auction.customer_phone||String(auction.customer_phone).replace(/\D/g,'').length<10){await conn.rollback();return res.status(422).json({success:false,message:'Add a valid phone number to your profile before paying the deposit'});}
     let [[deposit]]=await conn.query('SELECT * FROM auction_deposits WHERE auction_id=? AND user_id=? FOR UPDATE',[auction.id,req.user.id]);
-    if(deposit?.status==='HELD'){await conn.commit();return res.json({success:true,already_held:true,deposit});}
+    if(deposit?.status==='HELD'&&deposit.payment_status==='SUCCESS'){await conn.commit();return res.json({success:true,already_held:true,deposit});}
     if(deposit?.payment_session_id&&deposit.payment_status==='PENDING'){
       await conn.commit();return res.json({success:true,payment_session_id:deposit.payment_session_id,cashfree_order_id:deposit.cashfree_order_id,deposit});
     }
