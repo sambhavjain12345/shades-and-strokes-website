@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { AuthAPI } from '../services/api';
 import Cursor from '../components/common/Cursor';
 import Particles from '../components/common/Particles';
 
@@ -12,18 +13,81 @@ export default function Login() {
   const [error,    setError]    = useState('');
   const [success,  setSuccess]  = useState(false);
   const [showPass, setShowPass] = useState(false);
-  const { login, register, loading } = useAuth();
+  const { login, register, googleLogin, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const googleButtonRef = useRef(null);
+  const [googleClientId, setGoogleClientId] = useState(import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
+
+  const finishLogin = () => {
+    setSuccess(true);
+    const requestedPath = location.state?.from;
+    const destination = typeof requestedPath === 'string' && requestedPath.startsWith('/')
+      ? requestedPath
+      : '/';
+    setTimeout(() => navigate(destination, { replace: true }), 1800);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
     try {
       if (tab === 'login') await login(email, password);
       else await register(name, email, password);
-      setSuccess(true);
-      setTimeout(() => navigate('/'), 1800);
+      finishLogin();
     } catch (err) { setError(err.message); }
   };
+
+  useEffect(() => {
+    if (googleClientId) return;
+    AuthAPI.getGoogleConfig()
+      .then(data => data.client_id && setGoogleClientId(data.client_id))
+      .catch(() => {});
+  }, [googleClientId]);
+
+  useEffect(() => {
+    if (!googleClientId) return undefined;
+
+    const renderGoogleButton = () => {
+      if (!window.google?.accounts?.id || !googleButtonRef.current) return;
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async ({ credential }) => {
+          setError('');
+          try {
+            await googleLogin(credential);
+            finishLogin();
+          } catch (err) {
+            setError(err.message || 'Google sign-in failed');
+          }
+        },
+      });
+      googleButtonRef.current.innerHTML = '';
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'filled_black',
+        size: 'large',
+        width: Math.min(400, googleButtonRef.current.clientWidth || 400),
+        text: 'continue_with',
+        shape: 'rectangular',
+      });
+    };
+
+    const existing = document.querySelector('script[data-google-identity]');
+    if (existing) {
+      if (window.google?.accounts?.id) renderGoogleButton();
+      else existing.addEventListener('load', renderGoogleButton, { once: true });
+      return undefined;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentity = 'true';
+    script.addEventListener('load', renderGoogleButton, { once: true });
+    script.addEventListener('error', () => setError('Google sign-in could not be loaded'), { once: true });
+    document.head.appendChild(script);
+    return undefined;
+  }, [googleClientId]);
 
   const artBgs = ['bg1','bg2','bg3','bg4'];
   const [activeArt, setActiveArt] = useState(0);
@@ -149,16 +213,14 @@ export default function Login() {
           <span style={{ fontSize:'.55rem', letterSpacing:'.2em', textTransform:'uppercase', color:'var(--muted2)' }}>or continue with</span>
           <div style={{ flex:1, height:'.5px', background:'var(--border)' }} />
         </div>
-
-        <div style={{ display:'flex', gap:'.8rem' }}>
-          {['Google','GitHub'].map(p => (
-            <button key={p} style={{ flex:1, background:'transparent', border:'.5px solid var(--border)', padding:'.75rem 1rem', cursor:'none', fontFamily:'Josefin Sans,sans-serif', fontSize:'.58rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--muted)', transition:'all .3s' }}
-              onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border2)'}
-              onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
-              {p}
-            </button>
-          ))}
-        </div>
+        {googleClientId ? (
+          <div ref={googleButtonRef} style={{ minHeight:'44px', display:'flex', justifyContent:'center', width:'100%' }} />
+        ) : (
+          <div title="Add GOOGLE_CLIENT_ID to backend/.env" style={{ width:'100%', boxSizing:'border-box', minHeight:'44px', border:'.5px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', gap:'.7rem', color:'var(--muted)', fontSize:'.64rem', letterSpacing:'.08em', opacity:.7 }}>
+            <span style={{ fontFamily:'Arial,sans-serif', fontWeight:700, color:'#4285f4', fontSize:'1rem' }}>G</span>
+            Continue with Google · setup required
+          </div>
+        )}
 
         <div style={{ marginTop:'2rem', textAlign:'center', fontSize:'.58rem', letterSpacing:'.12em', color:'var(--muted)' }}>
           {tab === 'login' ? <>No account? <button onClick={() => setTab('register')} style={{ color:'var(--gold)', background:'none', border:'none', cursor:'none', fontSize:'.58rem', letterSpacing:'.12em', textDecoration:'underline' }}>Create one free</button></> : <>Have an account? <button onClick={() => setTab('login')} style={{ color:'var(--gold)', background:'none', border:'none', cursor:'none', fontSize:'.58rem', letterSpacing:'.12em', textDecoration:'underline' }}>Sign in</button></>}

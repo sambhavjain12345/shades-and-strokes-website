@@ -9,34 +9,24 @@ const genOrderNumber = () => {
   return `SS-${year}-${rand}`;
 };
 
-// ── Helper: sync product is_active based on current stock ────
-// If stock = 0  → hide from gallery (is_active = 0)
-// If stock > 0  → show in gallery  (is_active = 1)
-const syncProductStatus = async (conn, orderId) => {
-  const [items] = await conn.query(
-    'SELECT product_id FROM order_items WHERE order_id = ?',
-    [orderId]
-  );
-  for (const item of items) {
-    const [[prod]] = await conn.query(
-      'SELECT stock FROM products WHERE id = ?',
-      [item.product_id]
-    );
-    if (prod) {
-      const shouldBeActive = prod.stock > 0 ? 1 : 0;
-      await conn.query(
-        'UPDATE products SET is_active = ? WHERE id = ?',
-        [shouldBeActive, item.product_id]
-      );
-    }
-  }
+const STATUS_TRANSITIONS = {
+  pending:          ['confirmed', 'packaging', 'shipped', 'delivered', 'cancelled'],
+  confirmed:        ['packaging', 'shipped', 'delivered', 'cancelled'],
+  packaging:        ['shipped', 'delivered', 'cancelled'],
+  shipped:          ['delivered'],
+  delivered:        ['return_requested'],
+  return_requested: ['delivered', 'returned'],
+  cancelled:        [],
+  returned:         [],
 };
 
 // ── GET /api/orders ──────────────────────────────────────────
 exports.getOrders = asyncHandler(async (req, res) => {
   const isAdmin = req.user.role === 'admin';
   const { status, page = 1, limit = 10 } = req.query;
-  const offset = (Math.max(1, page) - 1) * limit;
+  const pageNumber  = Math.max(1, Number.parseInt(page, 10) || 1);
+  const limitNumber = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 10));
+  const offset = (pageNumber - 1) * limitNumber;
 
   let where  = isAdmin ? 'WHERE 1=1' : 'WHERE o.user_id = ?';
   const params = isAdmin ? [] : [req.user.id];
@@ -57,10 +47,10 @@ exports.getOrders = asyncHandler(async (req, res) => {
      ${where}
      ORDER BY o.placed_at DESC
      LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
+    [...params, limitNumber, offset]
   );
 
-  res.json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), orders });
+  res.json({ success: true, total, page: pageNumber, pages: Math.ceil(total / limitNumber), orders });
 });
 
 // ── GET /api/orders/:id ──────────────────────────────────────
@@ -108,17 +98,27 @@ exports.placeOrder = asyncHandler(async (req, res) => {
 
     let total = 0;
     const enriched = [];
+    const requestedItems = new Map();
 
+    // Collapse duplicate product rows so one request cannot bypass stock checks.
     for (const item of items) {
-      const [[prod]] = await conn.query(
-        'SELECT id, price, stock, title FROM products WHERE id = ? AND is_active = 1',
-        [item.product_id]
+      requestedItems.set(
+        Number(item.product_id),
+        (requestedItems.get(Number(item.product_id)) || 0) + Number(item.quantity)
       );
-      if (!prod) throw Object.assign(new Error(`Artwork ${item.product_id} not found`), { statusCode: 404 });
-      if (prod.stock < item.quantity) throw Object.assign(new Error(`"${prod.title}" is out of stock`), { statusCode: 400 });
+    }
 
-      total += prod.price * item.quantity;
-      enriched.push({ ...item, unit_price: prod.price });
+    for (const [product_id, quantity] of requestedItems) {
+      const [[prod]] = await conn.query(
+        "SELECT id, price, stock, title, sale_type FROM products WHERE id = ? AND is_active = 1 FOR UPDATE",
+        [product_id]
+      );
+      if (!prod) throw Object.assign(new Error(`Artwork ${product_id} not found`), { statusCode: 404 });
+      if (prod.sale_type === 'auction') throw Object.assign(new Error(`"${prod.title}" is only available by auction`), { statusCode: 400 });
+      if (prod.stock < quantity) throw Object.assign(new Error(`Not enough stock is available for "${prod.title}"`), { statusCode: 400 });
+
+      total += Number(prod.price) * quantity;
+      enriched.push({ product_id, quantity, unit_price: prod.price });
     }
 
     let orderNumber = genOrderNumber();
@@ -135,9 +135,16 @@ exports.placeOrder = asyncHandler(async (req, res) => {
         'INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)',
         [orderId, item.product_id, item.quantity, item.unit_price]
       );
+      const [stockUpdate] = await conn.query(
+        'UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?',
+        [item.quantity, item.product_id, item.quantity]
+      );
+      if (stockUpdate.affectedRows !== 1) {
+        throw Object.assign(new Error('Stock changed while placing the order. Please review your cart.'), { statusCode: 409 });
+      }
       await conn.query(
-        'UPDATE products SET stock = stock - ? WHERE id = ?',
-        [item.quantity, item.product_id]
+        'DELETE FROM cart_items WHERE user_id = ? AND product_id = ?',
+        [req.user.id, item.product_id]
       );
     }
 
@@ -146,8 +153,6 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       [orderId]
     );
     await conn.query("UPDATE orders SET status = 'confirmed' WHERE id = ?", [orderId]);
-    await conn.query('DELETE FROM cart_items WHERE user_id = ?', [req.user.id]);
-
     await conn.commit();
 
     const [newOrder] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
@@ -173,31 +178,41 @@ exports.placeOrder = asyncHandler(async (req, res) => {
 // ── PUT /api/orders/:id/status  (admin) ─────────────────────
 exports.updateOrderStatus = asyncHandler(async (req, res) => {
   const { status, description } = req.body;
-  const validStatuses = ['pending','confirmed','packaging','shipped','delivered','cancelled','return_requested','returned'];
+  const validStatuses = Object.keys(STATUS_TRANSITIONS);
 
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ success: false, message: 'Invalid status' });
   }
 
-  const [[order]] = await pool.query('SELECT id FROM orders WHERE id = ?', [req.params.id]);
-  if (!order) {
-    return res.status(404).json({ success: false, message: 'Order not found' });
-  }
-
-  await pool.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
-  await pool.query(
-    'INSERT INTO order_timeline (order_id, status, description) VALUES (?, ?, ?)',
-    [req.params.id, status, description || `Order status updated to ${status}`]
-  );
-
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    if (status === 'delivered') {
-      // Stock was already deducted when order was placed.
-      // Now check if stock hit 0 → hide product from gallery
-      await syncProductStatus(conn, req.params.id);
+    const [[order]] = await conn.query(
+      'SELECT id, status, order_type FROM orders WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (order.status === status) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: `Order is already '${status}'` });
+    }
+
+    if (order.order_type === 'auction' && status === 'cancelled') {
+      await conn.rollback();
+      return res.status(409).json({ success:false, message:'Completed auction purchases cannot be cancelled through the standard order flow' });
+    }
+
+    if (!STATUS_TRANSITIONS[order.status]?.includes(status)) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot change order status from '${order.status}' to '${status}'`,
+      });
     }
 
     if (status === 'cancelled' || status === 'returned') {
@@ -212,9 +227,13 @@ exports.updateOrderStatus = asyncHandler(async (req, res) => {
           [item.quantity, item.product_id]
         );
       }
-      // Re-activate products now that stock is restored
-      await syncProductStatus(conn, req.params.id);
     }
+
+    await conn.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
+    await conn.query(
+      'INSERT INTO order_timeline (order_id, status, description) VALUES (?, ?, ?)',
+      [req.params.id, status, description || `Order status updated to ${status}`]
+    );
 
     await conn.commit();
   } catch (err) {
@@ -231,7 +250,7 @@ exports.updateOrderStatus = asyncHandler(async (req, res) => {
   );
   if (orderRows.length) {
     const o = orderRows[0];
-    sendStatusUpdate(o, { name: o.name, email: o.email }, status);
+    sendStatusUpdate(o, { name: o.name, email: o.email }, status).catch(err => console.error('Status email failed:', err.message));
   }
 
   res.json({ success: true, message: `Order status updated to '${status}'` });
@@ -240,43 +259,73 @@ exports.updateOrderStatus = asyncHandler(async (req, res) => {
 // ── POST /api/orders/:id/return  (collector) ─────────────────
 exports.requestReturn = asyncHandler(async (req, res) => {
   const { reason } = req.body;
+  const conn = await pool.getConnection();
 
-  const [[order]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
-  if (!order) {
-    return res.status(404).json({ success: false, message: 'Order not found' });
-  }
-  if (order.user_id !== req.user.id) {
-    return res.status(403).json({ success: false, message: 'Not authorised' });
-  }
-  if (order.status !== 'delivered') {
-    return res.status(400).json({ success: false, message: 'Only delivered orders can be returned' });
-  }
+  try {
+    await conn.beginTransaction();
+    const [[order]] = await conn.query(
+      'SELECT * FROM orders WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (order.user_id !== req.user.id) {
+      await conn.rollback();
+      return res.status(403).json({ success: false, message: 'Not authorised' });
+    }
+    if (order.status !== 'delivered') {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: 'Only delivered orders can be returned' });
+    }
 
-  await pool.query("UPDATE orders SET status = 'return_requested' WHERE id = ?", [req.params.id]);
-  await pool.query(
-    "INSERT INTO order_timeline (order_id, status, description) VALUES (?, 'return_requested', ?)",
-    [req.params.id, reason ? `Return requested: ${reason}` : 'Return requested by customer']
-  );
-
-  res.json({ success: true, message: 'Return request submitted successfully' });
+    await conn.query("UPDATE orders SET status = 'return_requested' WHERE id = ?", [req.params.id]);
+    await conn.query(
+      "INSERT INTO order_timeline (order_id, status, description) VALUES (?, 'return_requested', ?)",
+      [req.params.id, reason ? `Return requested: ${reason}` : 'Return requested by customer']
+    );
+    await conn.commit();
+    res.json({ success: true, message: 'Return request submitted successfully' });
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 });
 
 // ── DELETE /api/orders/:id  (cancel) ────────────────────────
 exports.cancelOrder = asyncHandler(async (req, res) => {
-  const [[order]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
-  if (!order) {
-    return res.status(404).json({ success: false, message: 'Order not found' });
-  }
-  if (req.user.role !== 'admin' && order.user_id !== req.user.id) {
-    return res.status(403).json({ success: false, message: 'Not authorised' });
-  }
-  if (['shipped','delivered'].includes(order.status)) {
-    return res.status(400).json({ success: false, message: 'Cannot cancel an order that has already shipped' });
-  }
-
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [[order]] = await conn.query(
+      'SELECT * FROM orders WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (req.user.role !== 'admin' && order.user_id !== req.user.id) {
+      await conn.rollback();
+      return res.status(403).json({ success: false, message: 'Not authorised' });
+    }
+    if (!['pending', 'confirmed', 'packaging'].includes(order.status)) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: order.status === 'cancelled'
+          ? 'Order is already cancelled'
+          : 'This order can no longer be cancelled',
+      });
+    }
+    if (order.order_type === 'auction') {
+      await conn.rollback();
+      return res.status(409).json({ success:false, message:'Completed auction purchases cannot be cancelled through the standard order flow' });
+    }
 
     // Restore stock
     const [items] = await conn.query(
@@ -290,12 +339,9 @@ exports.cancelOrder = asyncHandler(async (req, res) => {
       );
     }
 
-    // Re-activate products that were sold out
-    await syncProductStatus(conn, req.params.id);
-
     await conn.query("UPDATE orders SET status = 'cancelled' WHERE id = ?", [req.params.id]);
     await conn.query(
-      "INSERT INTO order_timeline (order_id, status, description) VALUES (?, 'cancelled', 'Order cancelled — stock restored and listing re-activated')",
+      "INSERT INTO order_timeline (order_id, status, description) VALUES (?, 'cancelled', 'Order cancelled — stock restored')",
       [req.params.id]
     );
 
@@ -307,5 +353,8 @@ exports.cancelOrder = asyncHandler(async (req, res) => {
     conn.release();
   }
 
-  res.json({ success: true, message: 'Order cancelled and artwork relisted in gallery' });
+  const [[cancelled]] = await pool.query(`SELECT o.*,u.name,u.email FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?`,[req.params.id]);
+  if(cancelled)sendStatusUpdate(cancelled,{name:cancelled.name,email:cancelled.email},'cancelled').catch(err=>console.error('Cancellation email failed:',err.message));
+
+  res.json({ success: true, message: 'Order cancelled and stock restored' });
 });

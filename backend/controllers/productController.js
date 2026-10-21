@@ -13,14 +13,16 @@ exports.getProducts = asyncHandler(async (req, res) => {
     artist_id,
     featured,
     search,
-    sort    = 'created_at_desc',
+    sort    = 'featured',
     page    = 1,
     limit   = 12,
     min_price,
     max_price,
   } = req.query;
 
-  const offset = (Math.max(1, page) - 1) * limit;
+  const pageNumber  = Math.max(1, Number.parseInt(page, 10) || 1);
+  const limitNumber = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 12));
+  const offset = (pageNumber - 1) * limitNumber;
   const params = [];
   let   where  = 'WHERE p.is_active = 1';
 
@@ -36,11 +38,13 @@ exports.getProducts = asyncHandler(async (req, res) => {
   }
 
   const sortMap = {
+    featured:        'p.is_featured DESC, p.created_at DESC',
     price_asc:       'p.price ASC',
     price_desc:      'p.price DESC',
     newest:          'p.created_at DESC',
     oldest:          'p.created_at ASC',
     created_at_desc: 'p.created_at DESC',
+    top_rated:       'avg_rating DESC, review_count DESC, p.created_at DESC',
   };
   const orderBy = sortMap[sort] || 'p.created_at DESC';
 
@@ -48,6 +52,7 @@ exports.getProducts = asyncHandler(async (req, res) => {
     FROM products p
     JOIN artists    a ON p.artist_id   = a.id
     JOIN categories c ON p.category_id = c.id
+    LEFT JOIN auctions au ON au.product_id = p.id
     ${where}
   `;
 
@@ -59,20 +64,25 @@ exports.getProducts = asyncHandler(async (req, res) => {
   const [products] = await pool.query(
     `SELECT
        p.id, p.title, p.slug, p.price, p.stock, p.is_featured, p.tag,
-       p.image_url, p.medium, p.dimensions, p.year, p.created_at,
+       p.image_url, p.medium, p.dimensions, p.year, p.created_at, p.sale_type,
+       au.id AS auction_id, au.starting_price, au.current_bid,
+       au.minimum_increment, au.starts_at, au.ends_at, au.status AS auction_status,
+       COALESCE((SELECT AVG(rr.rating) FROM reviews rr WHERE rr.product_id=p.id),0) AS avg_rating,
+       (SELECT COUNT(*) FROM reviews rc WHERE rc.product_id=p.id) AS review_count,
+       (SELECT COUNT(*) FROM bids counted WHERE counted.auction_id = au.id) AS bid_count,
        a.id AS artist_id, a.name AS artist_name,
        c.id AS category_id, c.name AS category_name, c.slug AS category_slug
      ${baseSQL}
      ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
+    [...params, limitNumber, offset]
   );
 
   res.json({
     success: true,
     total,
-    page:    Number(page),
-    pages:   Math.ceil(total / limit),
+    page:    pageNumber,
+    pages:   Math.ceil(total / limitNumber),
     products,
   });
 });
@@ -85,11 +95,14 @@ exports.getProduct = asyncHandler(async (req, res) => {
        a.name AS artist_name, a.bio AS artist_bio,
        a.location AS artist_location, a.avatar_url AS artist_avatar,
        c.name AS category_name, c.slug AS category_slug,
+       au.id AS auction_id, au.starting_price, au.current_bid,
+       au.minimum_increment, au.starts_at, au.ends_at, au.status AS auction_status,
        COALESCE(AVG(r.rating), 0)  AS avg_rating,
        COUNT(r.id)                 AS review_count
      FROM products p
      JOIN artists    a ON p.artist_id   = a.id
      JOIN categories c ON p.category_id = c.id
+     LEFT JOIN auctions au ON au.product_id = p.id
      LEFT JOIN reviews r ON r.product_id = p.id
      WHERE p.id = ? AND p.is_active = 1
      GROUP BY p.id`,
@@ -201,12 +214,29 @@ exports.getReviews = asyncHandler(async (req, res) => {
 // ── POST /api/products/:id/reviews ──────────────────────────
 exports.addReview = asyncHandler(async (req, res) => {
   const { rating, comment } = req.body;
-  const [result] = await pool.query(
-    'INSERT INTO reviews (product_id, user_id, rating, comment) VALUES (?, ?, ?, ?)',
-    [req.params.id, req.user.id, rating, comment]
-  );
-  const [rows] = await pool.query('SELECT * FROM reviews WHERE id = ?', [result.insertId]);
-  res.status(201).json({ success: true, review: rows[0] });
+  const [[purchase]] = await pool.query(
+    `SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id=o.id
+     WHERE o.user_id=? AND oi.product_id=? AND o.payment_status='paid' AND o.status='delivered'
+     ORDER BY o.placed_at DESC LIMIT 1`,[req.user.id,req.params.id]);
+  if(!purchase)return res.status(403).json({success:false,message:'Only customers with a delivered purchase can review this artwork'});
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO reviews (product_id, user_id, order_id, rating, comment) VALUES (?, ?, ?, ?, ?)',
+      [req.params.id, req.user.id, purchase.id, rating, comment]
+    );
+    const [rows] = await pool.query('SELECT * FROM reviews WHERE id = ?', [result.insertId]);
+    return res.status(201).json({ success: true, review: rows[0] });
+  } catch(error) {
+    if(error.code==='ER_DUP_ENTRY')return res.status(409).json({success:false,message:'You have already reviewed this artwork'});
+    throw error;
+  }
+});
+
+exports.getReviewEligibility = asyncHandler(async(req,res)=>{
+  const [[purchase]]=await pool.query(`SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.user_id=? AND oi.product_id=? AND o.payment_status='paid' AND o.status='delivered' LIMIT 1`,[req.user.id,req.params.id]);
+  const [[review]]=await pool.query('SELECT id FROM reviews WHERE user_id=? AND product_id=?',[req.user.id,req.params.id]);
+  res.json({success:true,eligible:Boolean(purchase&&!review),already_reviewed:Boolean(review),requires_delivered_purchase:!purchase});
 });
 
 // ── GET /api/products/stats/public ──────────────────────────

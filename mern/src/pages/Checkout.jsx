@@ -1,21 +1,26 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { CartAPI, OrdersAPI, getBgClass, getProductImageStyle } from '../services/api';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { AuctionsAPI, CartAPI, OrdersAPI, getBgClass, getProductImageStyle } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../hooks/useToast';
+import { openCashfreeCheckout } from '../services/cashfree';
 
 export default function Checkout() {
   const { user }          = useAuth();
   const { refreshCounts } = useCart();
   const { showToast }     = useToast();
   const navigate          = useNavigate();
+  const [searchParams]    = useSearchParams();
+  const auctionId         = searchParams.get('auction');
+  const returnedPaymentId = searchParams.get('payment_order_id');
 
   const [step,     setStep]     = useState(1); // 1=shipping, 2=review, 3=confirmed
   const [items,    setItems]    = useState([]);
   const [subtotal, setSubtotal] = useState(0);
   const [loading,  setLoading]  = useState(false);
   const [order,    setOrder]    = useState(null);
+  const [auctionOffer, setAuctionOffer] = useState(null);
 
   const [form, setForm] = useState({
     shipping_name:  user?.name  || '',
@@ -28,10 +33,31 @@ export default function Checkout() {
 
   useEffect(() => {
     if (!user) { navigate('/login'); return; }
-    CartAPI.get()
-      .then(d => { setItems(d.items); setSubtotal(d.subtotal); })
-      .catch(() => navigate('/cart'));
-  }, [user]);
+    if (auctionId) {
+      AuctionsAPI.getWon().then(d => {
+        const auction = (d.auctions || []).find(a => String(a.id) === String(auctionId));
+        if (!auction || auction.status !== 'payment_pending' || !auction.is_active_buyer) {
+          navigate('/won-auctions', { replace:true });
+          return;
+        }
+        setAuctionOffer(auction);
+        setItems([{ id:`auction-${auction.id}`, product_id:auction.product_id, title:auction.title, image_url:auction.image_url, artist_name:auction.artist_name, quantity:1, price:auction.active_bid_amount }]);
+        setSubtotal(Number(auction.amount_due));
+      }).catch(() => navigate('/won-auctions', { replace:true }));
+    } else {
+      CartAPI.get()
+        .then(d => { setItems(d.items); setSubtotal(d.subtotal); })
+        .catch(() => navigate('/cart'));
+    }
+  }, [user, auctionId, navigate]);
+
+  useEffect(()=>{
+    if(!user||!returnedPaymentId)return;
+    setLoading(true);
+    const verify=auctionId?AuctionsAPI.verifyPayment(auctionId,returnedPaymentId):OrdersAPI.verifyPayment(returnedPaymentId);
+    verify.then(d=>{setOrder(d.order);setStep(3);refreshCounts();navigate(auctionId?`/checkout?auction=${auctionId}`:'/checkout',{replace:true});})
+      .catch(error=>showToast(error.message,'error')).finally(()=>setLoading(false));
+  },[user,returnedPaymentId,auctionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const placeOrder = async () => {
     if (!form.shipping_name || !form.shipping_addr || !form.shipping_phone) {
@@ -39,15 +65,16 @@ export default function Checkout() {
     }
     setLoading(true);
     try {
-      const orderItems = items.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
-      const d = await OrdersAPI.place({
-        items:          orderItems,
+      const shipping = {
         shipping_name:  form.shipping_name,
         shipping_addr:  form.shipping_addr,
         shipping_phone: form.shipping_phone,
         notes:          form.notes,
-      });
-      if (!d.success) throw new Error(d.message);
+      };
+      const request={...shipping,...(!auctionId?{items:items.map(i=>({product_id:i.product_id,quantity:i.quantity}))}:{})};
+      const payment=auctionId?await AuctionsAPI.startPayment(auctionId,request):await OrdersAPI.startPayment(request);
+      await openCashfreeCheckout(payment.payment_session_id);
+      const d=auctionId?await AuctionsAPI.verifyPayment(auctionId,payment.cashfree_order_id):await OrdersAPI.verifyPayment(payment.cashfree_order_id);
       setOrder(d.order);
       setStep(3);
       refreshCounts();
@@ -153,7 +180,7 @@ export default function Checkout() {
             </div>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '2.5rem' }}>
-              <Link to="/cart" style={{ fontSize: '.58rem', letterSpacing: '.18em', textTransform: 'uppercase', color: 'var(--muted)', border: '.5px solid var(--border)', padding: '.8rem 1.6rem', textDecoration: 'none', transition: 'all .3s', fontFamily: "'Josefin Sans',sans-serif" }}>
+              <Link to={auctionId ? '/won-auctions' : '/cart'} style={{ fontSize: '.58rem', letterSpacing: '.18em', textTransform: 'uppercase', color: 'var(--muted)', border: '.5px solid var(--border)', padding: '.8rem 1.6rem', textDecoration: 'none', transition: 'all .3s', fontFamily: "'Josefin Sans',sans-serif" }}>
                 ← Back to Cart
               </Link>
               <button
@@ -170,7 +197,7 @@ export default function Checkout() {
           </div>
 
           {/* Order summary sidebar */}
-          <OrderSummary items={items} subtotal={subtotal} />
+          <OrderSummary items={items} subtotal={subtotal} auctionOffer={auctionOffer} />
         </div>
       )}
 
@@ -226,7 +253,7 @@ export default function Checkout() {
             </div>
           </div>
 
-          <OrderSummary items={items} subtotal={subtotal} />
+          <OrderSummary items={items} subtotal={subtotal} auctionOffer={auctionOffer} />
         </div>
       )}
 
@@ -245,7 +272,7 @@ export default function Checkout() {
           </div>
           <p style={{ fontSize: '.7rem', letterSpacing: '.1em', color: 'var(--muted)', lineHeight: 1.8, marginBottom: '2.5rem' }}>
             Thank you for your acquisition. Your artwork is being prepared with care.<br/>
-            {user?.email && `A confirmation has been sent to ${user.email}`}
+            You can follow every update from your order history.
           </p>
 
           {/* Order details box */}
@@ -282,7 +309,7 @@ export default function Checkout() {
 }
 
 /* ── Order summary sidebar ─────────────────────────────────── */
-function OrderSummary({ items, subtotal }) {
+function OrderSummary({ items, subtotal, auctionOffer }) {
   return (
     <div style={{ background: 'var(--surface2)', border: '.5px solid var(--border)', padding: '1.8rem', position: 'sticky', top: '100px' }}>
       <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: '1.2rem', fontWeight: 300, color: 'var(--cream)', marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '.5px solid var(--border)' }}>
@@ -314,6 +341,10 @@ function OrderSummary({ items, subtotal }) {
       </div>
 
       <div style={{ borderTop: '.5px solid var(--border)', paddingTop: '1rem' }}>
+        {auctionOffer && <>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'.8rem', fontSize:'.65rem' }}><span style={{ color:'var(--muted)' }}>Final bid</span><span style={{ color:'var(--cream)' }}>₹ {Number(auctionOffer.active_bid_amount).toLocaleString()}</span></div>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'.8rem', fontSize:'.65rem' }}><span style={{ color:'var(--muted)' }}>Deposit credit</span><span style={{ color:'#6fa77b' }}>− ₹ {Number(auctionOffer.deposit_amount).toLocaleString()}</span></div>
+        </>}
         {[
           ['Subtotal',   `₹ ${Number(subtotal).toLocaleString()}`],
           ['Shipping',   'Complimentary'],

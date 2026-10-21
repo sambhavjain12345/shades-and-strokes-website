@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CartAPI, WishlistAPI, OrdersAPI, AuthAPI, getBgClass } from '../services/api';
+import { CartAPI, WishlistAPI, OrdersAPI, AuthAPI, getBgClass, readStoredArray } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../hooks/useToast';
@@ -23,7 +23,7 @@ export function Cart() {
     } else loadLocal();
   };
   const loadLocal = () => {
-    const c = JSON.parse(localStorage.getItem('ss_cart')||'[]');
+    const c = readStoredArray('ss_cart');
     setItems(c.map(i=>({...i, product_id:i.id, title:i.name, quantity:i.qty, artist_name:''})));
     setSub(c.reduce((s,i)=>s+(i.price||0)*i.qty, 0));
   };
@@ -37,7 +37,7 @@ export function Cart() {
       try { await CartAPI.update(item.id, newQty); await load(); refreshCounts(); }
       catch (e) { showToast(e.message,'error'); }
     } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart')||'[]');
+      const c = readStoredArray('ss_cart');
       const it = c.find(i=>i.id===item.product_id);
       if (it) it.qty = newQty;
       localStorage.setItem('ss_cart', JSON.stringify(c));
@@ -50,14 +50,14 @@ export function Cart() {
       try { await CartAPI.remove(item.id); await load(); refreshCounts(); }
       catch (e) { showToast(e.message,'error'); }
     } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart')||'[]').filter(i=>i.id!==item.product_id);
+      const c = readStoredArray('ss_cart').filter(i=>i.id!==item.product_id);
       localStorage.setItem('ss_cart', JSON.stringify(c));
       loadLocal(); refreshCounts();
     }
   };
 
   const checkout = () => {
-    if (!user) { showToast('Sign in to checkout'); navigate('/login'); return; }
+    if (!user) { showToast('Sign in to checkout'); navigate('/login', { state: { from: '/checkout' } }); return; }
     if (items.length === 0) { showToast('Your cart is empty', 'error'); return; }
     navigate('/checkout');
   };
@@ -151,7 +151,7 @@ export function Wishlist() {
     } else loadLocal();
   };
   const loadLocal = () => {
-    const w = JSON.parse(localStorage.getItem('ss_wish')||'[]');
+    const w = readStoredArray('ss_wish');
     setItems(w.map(i=>({...i, product_id:i.id, title:i.name})));
   };
   useEffect(() => { load(); }, [user]);
@@ -161,7 +161,7 @@ export function Wishlist() {
       try { await CartAPI.add(item.product_id, 1); showToast('Added to cart','success'); refreshCounts(); }
       catch (e) { showToast(e.message,'error'); }
     } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart')||'[]');
+      const c = readStoredArray('ss_cart');
       if (!c.find(i=>i.id===item.product_id)) c.push({ id:item.product_id, name:item.title, price:item.price, qty:1 });
       localStorage.setItem('ss_cart', JSON.stringify(c));
       showToast('Added to cart'); refreshCounts();
@@ -173,7 +173,7 @@ export function Wishlist() {
       try { await WishlistAPI.remove(item.product_id); await load(); refreshCounts(); }
       catch (e) { showToast(e.message,'error'); }
     } else {
-      const w = JSON.parse(localStorage.getItem('ss_wish')||'[]').filter(i=>i.id!==item.product_id);
+      const w = readStoredArray('ss_wish').filter(i=>i.id!==item.product_id);
       localStorage.setItem('ss_wish', JSON.stringify(w));
       loadLocal(); refreshCounts();
     }
@@ -490,7 +490,7 @@ export function Profile() {
 
   const initials = user?.name?.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() || '?';
   const navLinks = [
-    { label:'Profile', to:'/profile' }, { label:'Orders', to:'/orders' }, { label:'Wishlist', to:'/wishlist' },
+    { label:'Profile', to:'/profile' }, { label:'Orders', to:'/orders' }, { label:'Won Auctions', to:'/won-auctions' }, { label:'Wishlist', to:'/wishlist' },
   ];
 
   return (

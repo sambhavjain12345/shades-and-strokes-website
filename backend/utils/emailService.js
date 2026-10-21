@@ -1,16 +1,20 @@
-// ============================================================
-//  Email Service — Placeholder (configure with nodemailer later)
-//  Place this file in: backend/utils/emailService.js
-// ============================================================
-
-const sendOrderConfirmation = async (order, items, user) => {
-  // TODO: configure nodemailer or SendGrid here
-  console.log(`📧 Order confirmation would be sent to ${user?.email} for order ${order?.order_number}`);
+const nodemailer = require('nodemailer');
+let transporter;
+const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const money=value=>`₹ ${Number(value||0).toLocaleString('en-IN',{minimumFractionDigits:2})}`;
+const appUrl=()=>(process.env.CLIENT_URL||'http://localhost:5173').replace(/\/$/,'');
+const mailer=()=>{if(transporter)return transporter;if(!process.env.SMTP_HOST||!process.env.SMTP_USER||!process.env.SMTP_PASS)return null;transporter=nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:String(process.env.SMTP_SECURE||'false')==='true',auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}});return transporter;};
+const frame=(title,body)=>`<!doctype html><html><body style="margin:0;background:#0b0908;color:#eee5d4;font-family:Arial,sans-serif"><div style="max-width:680px;margin:auto;padding:36px"><div style="color:#c9a84c;letter-spacing:4px;font-size:12px">SHADES &amp; STROKES</div><h1 style="font-family:Georgia,serif;font-weight:normal;font-size:32px">${esc(title)}</h1>${body}<p style="margin-top:36px;border-top:1px solid #453b28;padding-top:20px;color:#948b7e;font-size:12px">Thank you for collecting art with Shades &amp; Strokes.</p></div></body></html>`;
+const send=async({to,subject,html})=>{
+  if(process.env.RESEND_API_KEY){
+    const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:process.env.EMAIL_FROM,to:[to],subject,html})});
+    if(!response.ok){const details=await response.text();throw new Error(`Email API rejected the message (${response.status}): ${details.slice(0,300)}`);}
+    return true;
+  }
+  const tx=mailer();
+  if(!tx){if(process.env.NODE_ENV==='development')console.info(`Email skipped (provider not configured): ${subject}`);return false;}
+  await tx.sendMail({from:process.env.EMAIL_FROM||process.env.SMTP_USER,to,subject,html});return true;
 };
-
-const sendStatusUpdate = async (order, user, status) => {
-  // TODO: configure nodemailer or SendGrid here
-  console.log(`📧 Status update (${status}) would be sent to ${user?.email} for order ${order?.order_number}`);
-};
-
-module.exports = { sendOrderConfirmation, sendStatusUpdate };
+const sendOrderConfirmation=async(order,items,user)=>{const rows=items.map(item=>`<tr><td style="padding:12px 0"><div style="display:flex;gap:14px;align-items:center">${item.image_url?`<img src="${esc(item.image_url)}" alt="" width="72" height="72" style="object-fit:cover">`:''}<div><b>${esc(item.title)}</b><br><span style="color:#948b7e">${esc(item.artist_name)} · Qty ${item.quantity}</span></div></div></td><td style="text-align:right">${money(Number(item.unit_price)*Number(item.quantity))}</td></tr>`).join('');return send({to:user.email,subject:`Order confirmed · ${order.order_number}`,html:frame('Your artwork is secured',`<p>Hello ${esc(user.name)},</p><p>Payment has been verified and your order is confirmed.</p><table style="width:100%;border-collapse:collapse">${rows}</table><div style="background:#15110d;padding:18px;margin:20px 0"><b>Order:</b> ${esc(order.order_number)}<br><b>Amount:</b> ${money(order.total_amount)}<br><b>Payment:</b> ${esc(order.payment_status)}<br><b>Ship to:</b> ${esc(order.shipping_name)}<br>${esc(order.shipping_addr)}</div><a href="${appUrl()}/orders" style="display:inline-block;background:#c9a84c;color:#0b0908;padding:13px 22px;text-decoration:none">View Order</a>`)})};
+const sendStatusUpdate=async(order,user,status)=>{const copy={shipped:['Your artwork is on its way','Your carefully packed artwork has been shipped.'],delivered:['Your artwork has arrived','Your order has been marked delivered. You may now leave a verified review.'],cancelled:['Your order was cancelled','Your order has been cancelled.']}[status];if(!copy)return false;return send({to:user.email,subject:`${copy[0]} · ${order.order_number}`,html:frame(copy[0],`<p>Hello ${esc(user.name)},</p><p>${copy[1]}</p><p><b>Order:</b> ${esc(order.order_number)}</p><a href="${appUrl()}/orders" style="display:inline-block;background:#c9a84c;color:#0b0908;padding:13px 22px;text-decoration:none">View Order</a>`)})};
+module.exports={sendOrderConfirmation,sendStatusUpdate};

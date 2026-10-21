@@ -24,7 +24,7 @@ const adminFetch = (url, opts = {}) => {
   }).then(r => r.json());
 };
 
-// Upload image to Cloudinary via backend
+// Upload through the backend (local disk by default, Cloudinary when configured).
 const uploadImage = async (file) => {
   const token = localStorage.getItem('ss_token');
   const formData = new FormData();
@@ -104,6 +104,7 @@ function ImageUploader({ value, onChange }) {
   const fileRef      = useRef();
   const [uploading, setUploading] = useState(false);
   const [dragOver,  setDragOver]  = useState(false);
+  const [previewError, setPreviewError] = useState(false);
   const { showToast } = useToast ? useToast() : { showToast: alert };
 
   const handleFile = async (file) => {
@@ -111,6 +112,7 @@ function ImageUploader({ value, onChange }) {
     setUploading(true);
     try {
       const url = await uploadImage(file);
+      setPreviewError(false);
       onChange(url);
     } catch (e) {
       alert('Upload failed: ' + e.message);
@@ -141,7 +143,7 @@ function ImageUploader({ value, onChange }) {
           transition: 'all .3s', marginBottom: '.8rem',
         }}>
         {uploading ? (
-          <div style={{ fontSize:'.62rem', letterSpacing:'.14em', color:'var(--gold3)' }}>⏳ Uploading to Cloudinary…</div>
+          <div style={{ fontSize:'.62rem', letterSpacing:'.14em', color:'var(--gold3)' }}>⏳ Uploading image…</div>
         ) : (
           <>
             <div style={{ fontSize:'1.4rem', marginBottom:'.4rem' }}>📁</div>
@@ -162,7 +164,7 @@ function ImageUploader({ value, onChange }) {
       {/* Manual URL input */}
       <input
         style={inp} value={value}
-        onChange={e => onChange(e.target.value)}
+        onChange={e => { setPreviewError(false); onChange(e.target.value); }}
         placeholder="Or paste image URL: https://images.unsplash.com/..."
         onFocus={e => e.target.style.borderColor = 'var(--gold)'}
         onBlur={e => e.target.style.borderColor = 'var(--border2)'}
@@ -170,14 +172,12 @@ function ImageUploader({ value, onChange }) {
 
       {/* Preview */}
       {value && (
-        <div style={{ marginTop:'.6rem', position:'relative' }}>
-          <div style={{
-            width:'100%', height:'140px',
-            backgroundImage: `url(${value})`, backgroundSize:'cover', backgroundPosition:'center',
-            border:'.5px solid var(--border2)',
-          }} />
+        <div style={{ marginTop:'.6rem', position:'relative', minHeight:'140px', border:'.5px solid var(--border2)', overflow:'hidden' }}>
+          {!previewError ? <img src={value.trim()} alt="Artwork preview" onError={() => setPreviewError(true)}
+            style={{ width:'100%', height:'180px', display:'block', objectFit:'contain', background:'var(--surface)' }} />
+            : <div style={{ height:'140px', display:'flex', alignItems:'center', justifyContent:'center', color:'#c05050', fontSize:'.6rem', letterSpacing:'.1em' }}>Preview could not be loaded</div>}
           <button
-            type="button" onClick={() => onChange('')}
+            type="button" onClick={() => { setPreviewError(false); onChange(''); }}
             style={{ position:'absolute', top:'.4rem', right:'.4rem', background:'rgba(192,80,80,.85)', color:'#fff', border:'none', padding:'.3rem .7rem', cursor:'none', fontSize:'.5rem', letterSpacing:'.12em', textTransform:'uppercase' }}>
             ✕ Remove
           </button>
@@ -189,6 +189,11 @@ function ImageUploader({ value, onChange }) {
 
 // ── Product Modal ─────────────────────────────────────────────
 function ProductModal({ product, artists, categories, onSave, onClose }) {
+  const localDateTime = value => {
+    if (!value) return '';
+    const date = new Date(value);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
   const [form, setForm] = useState({
     title:       product?.title       || '',
     price:       product?.price       || '',
@@ -202,6 +207,15 @@ function ProductModal({ product, artists, categories, onSave, onClose }) {
     category_id: product?.category_id || (categories[0]?.id || ''),
     is_featured: !!product?.is_featured,
     image_url:   product?.image_url   || '',
+    sale_type:   product?.sale_type   || 'fixed',
+    auction_starting_price: product?.auction_starting_price || product?.price || '',
+    reserve_price: product?.reserve_price || product?.auction_starting_price || product?.price || '',
+    deposit_amount: product?.deposit_amount || 500,
+    payment_window_hours: product?.payment_window_hours || 48,
+    second_chance_window_hours: product?.second_chance_window_hours || 24,
+    minimum_increment: product?.minimum_increment || 500,
+    starts_at: localDateTime(product?.starts_at),
+    ends_at: localDateTime(product?.ends_at),
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -237,15 +251,28 @@ function ProductModal({ product, artists, categories, onSave, onClose }) {
               </select>
             </div>
             <div>
-              <label style={lbl}>Price (₹) *</label>
-              <input style={inp} type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="0"
-                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+              <label style={lbl}>Sale Type *</label>
+              <select style={{ ...inp, appearance:'none' }} value={form.sale_type} onChange={e=>set('sale_type',e.target.value)}><option value="fixed">Fixed Price</option><option value="auction">Auction</option></select>
             </div>
             <div>
+              <label style={lbl}>{form.sale_type === 'auction' ? 'Starting Bid (₹) *' : 'Price (₹) *'}</label>
+              <input style={inp} type="number" min="0.01" step="0.01" value={form.sale_type === 'auction' ? form.auction_starting_price : form.price} onChange={e => set(form.sale_type === 'auction' ? 'auction_starting_price' : 'price', e.target.value)} placeholder="0"
+                onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
+            </div>
+            {form.sale_type === 'auction' && <>
+              <div><label style={lbl}>Reserve Price (₹) *</label><input style={inp} type="number" min={form.auction_starting_price || '0.01'} step="0.01" value={form.reserve_price} onChange={e=>set('reserve_price',e.target.value)} /></div>
+              <div><label style={lbl}>Minimum Increment (₹) *</label><input style={inp} type="number" min="0.01" step="0.01" value={form.minimum_increment} onChange={e=>set('minimum_increment',e.target.value)} /></div>
+              <div><label style={lbl}>Refundable Deposit (₹) *</label><input style={inp} type="number" min="0.01" step="0.01" value={form.deposit_amount} onChange={e=>set('deposit_amount',e.target.value)} /></div>
+              <div><label style={lbl}>Winner Payment Hours *</label><input style={inp} type="number" min="1" max="168" value={form.payment_window_hours} onChange={e=>set('payment_window_hours',e.target.value)} /></div>
+              <div><label style={lbl}>Second Chance Hours *</label><input style={inp} type="number" min="1" max="168" value={form.second_chance_window_hours} onChange={e=>set('second_chance_window_hours',e.target.value)} /></div>
+              <div><label style={lbl}>Starts At *</label><input style={inp} type="datetime-local" value={form.starts_at} onChange={e=>set('starts_at',e.target.value)} /></div>
+              <div><label style={lbl}>Ends At *</label><input style={inp} type="datetime-local" value={form.ends_at} onChange={e=>set('ends_at',e.target.value)} /></div>
+            </>}
+            {form.sale_type === 'fixed' && <div>
               <label style={lbl}>Quantity Available <span style={{ color:'var(--muted2)', fontSize:'.46rem', textTransform:'none', letterSpacing:0 }}>(0 = sold out)</span></label>
               <input style={inp} type="number" min="0" value={form.stock} onChange={e => set('stock', e.target.value)} placeholder="1"
                 onFocus={e=>e.target.style.borderColor='var(--gold)'} onBlur={e=>e.target.style.borderColor='var(--border2)'} />
-            </div>
+            </div>}
             <div>
               <label style={lbl}>Medium</label>
               <input style={inp} value={form.medium} onChange={e => set('medium', e.target.value)} placeholder="Oil on Canvas"
@@ -468,21 +495,33 @@ export default function Admin() {
         body: JSON.stringify({ role }),
       });
       if (!d.success) throw new Error(d.message);
-      showToast(`User role updated to ${role}`, 'success');
+      showToast(d.artist_profile_created
+        ? 'Artist role assigned and Studio profile created'
+        : `User role updated to ${role}`, 'success');
       setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, role } : u));
     } catch (e) { showToast(e.message, 'error'); }
   };
 
   // ── Product CRUD ──────────────────────────────────────────
   const saveProduct = async (form) => {
-    if (!form.title || !form.artist_id || !form.category_id || !form.price) {
+    const payload = { ...form };
+    if (payload.sale_type === 'auction') {
+      payload.price = payload.auction_starting_price;
+      payload.stock = 1;
+      if (!payload.auction_starting_price || !payload.reserve_price || !payload.deposit_amount || !payload.minimum_increment || !payload.payment_window_hours || !payload.second_chance_window_hours || !payload.starts_at || !payload.ends_at) {
+        showToast('Starting bid, reserve, increment, start and end time are required', 'error'); return;
+      }
+      payload.starts_at = new Date(payload.starts_at).toISOString();
+      payload.ends_at = new Date(payload.ends_at).toISOString();
+    }
+    if (!payload.title || !payload.artist_id || !payload.category_id || !payload.price) {
       showToast('Title, artist, category and price are required', 'error'); return;
     }
     const isEdit = productModal && typeof productModal === 'object';
     try {
       const d = await adminFetch(
         isEdit ? `/api/admin/products/${productModal.id}` : '/api/admin/products',
-        { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(form) }
+        { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(payload) }
       );
       if (!d.success) throw new Error(d.message);
       showToast(isEdit ? 'Artwork updated ✓' : 'Artwork added ✓', 'success');
@@ -734,7 +773,7 @@ export default function Admin() {
               ) : (
                 <div style={{ background:'var(--surface2)', border:'.5px solid var(--border)', overflowX:'auto' }}>
                   <table style={{ width:'100%', borderCollapse:'collapse' }}>
-                    <thead><tr>{['Artwork','Artist','Category','Price','Stock','Status','Actions'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                    <thead><tr>{['Artwork','Artist','Category','Sale / Bid','Stock','Status','Actions'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                     <tbody>
                       {products.length === 0 && <tr><td colSpan={7} style={{ ...td, textAlign:'center', color:'var(--muted)', padding:'3rem' }}>No artworks found</td></tr>}
                       {products.map(p => (
@@ -756,13 +795,13 @@ export default function Admin() {
                           </td>
                           <td style={td}>{p.artist_name}</td>
                           <td style={td}>{p.category_name}</td>
-                          <td style={{ ...td, fontFamily:"'Cormorant Garamond',serif", color:'var(--gold)' }}>₹ {Number(p.price).toLocaleString()}</td>
-                          <td style={td}>{p.stock}</td>
+                          <td style={{ ...td, fontFamily:"'Cormorant Garamond',serif", color:'var(--gold)' }}>{p.sale_type === 'auction' ? `${p.current_bid ? 'Bid' : 'Start'} ₹ ${Number(p.current_bid || p.auction_starting_price).toLocaleString('en-IN')}` : `₹ ${Number(p.price).toLocaleString('en-IN')}`}</td>
+                          <td style={td}>{p.sale_type === 'auction' ? '—' : p.stock}</td>
                           <td style={td}>
                             <span style={{ fontSize:'.5rem', letterSpacing:'.12em', textTransform:'uppercase', padding:'.22rem .6rem', border:'.5px solid',
                               color:       p.is_active ? '#4a8c5c' : 'var(--muted)',
                               borderColor: p.is_active ? 'rgba(74,140,92,.4)' : 'var(--border)' }}>
-                              {p.is_active ? 'Active' : 'Hidden'}
+                              {p.is_active ? (p.sale_type === 'auction' ? `Auction · ${p.auction_status}` : 'Active') : 'Hidden'}
                             </span>
                           </td>
                           <td style={td}>

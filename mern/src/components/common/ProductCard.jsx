@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { CartAPI, WishlistAPI, getBgClass, getProductImageStyle } from '../../services/api';
+import { CartAPI, WishlistAPI, getBgClass, readStoredArray } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 
 export default function ProductCard({ product, style = {} }) {
@@ -11,9 +12,11 @@ export default function ProductCard({ product, style = {} }) {
   const { showToast }     = useToast();
 
   const bg       = getBgClass(product.id);
-  const imgStyle = getProductImageStyle(product);
-  const hasImage = !!product.image_url;
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageUrl = product.image_url?.trim();
+  const hasImage = Boolean(imageUrl && !imageFailed);
   const soldOut  = product.stock === 0 || product.stock === '0';
+  const isAuction = product.sale_type === 'auction';
 
   const handleCart = async (e) => {
     e.stopPropagation();
@@ -22,7 +25,7 @@ export default function ProductCard({ product, style = {} }) {
       try { await CartAPI.add(product.id, 1); showToast('Added to cart', 'success'); refreshCounts(); }
       catch (err) { showToast(err.message, 'error'); }
     } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart') || '[]');
+      const c = readStoredArray('ss_cart');
       if (!c.find(i => i.id === product.id)) c.push({ id: product.id, name: product.title, price: product.price, qty: 1 });
       localStorage.setItem('ss_cart', JSON.stringify(c));
       showToast('Added to cart'); refreshCounts();
@@ -64,10 +67,12 @@ export default function ProductCard({ product, style = {} }) {
       )}
 
       <div className="prod-img" style={{ height: style.height || '280px' }}>
-        <div
-          className={hasImage ? '' : `prod-img-bg ${bg}`}
-          style={{ width:'100%', height:'100%', ...imgStyle }}
-        />
+        {hasImage ? (
+          <img className="product-image" src={imageUrl} alt={product.title}
+            loading="lazy" onError={() => setImageFailed(true)} />
+        ) : (
+          <div className={`prod-img-bg ${bg}`} />
+        )}
         <div className="prod-overlay">
           <div className="overlay-title">{product.title}</div>
           <div className="overlay-type">{product.medium || product.category_name}</div>
@@ -75,7 +80,9 @@ export default function ProductCard({ product, style = {} }) {
             <button className="overlay-btn" onClick={(e) => { e.stopPropagation(); navigate(`/product/${product.id}`); }}>
               View Work
             </button>
-            {soldOut ? (
+            {isAuction ? (
+              <button className="overlay-btn" onClick={(e) => { e.stopPropagation(); navigate(`/product/${product.id}`); }}>Place Bid</button>
+            ) : soldOut ? (
               <button className="overlay-btn" style={{ opacity:.5, cursor:'not-allowed' }} onClick={e => e.stopPropagation()}>
                 Sold Out
               </button>
@@ -91,9 +98,12 @@ export default function ProductCard({ product, style = {} }) {
 
       <div className="prod-info">
         <div className="prod-name">{product.title}</div>
+        {Number(product.review_count)>0&&<div style={{color:'var(--gold)',fontSize:'.65rem',letterSpacing:'.08em',margin:'.35rem 0'}}>★ {Number(product.avg_rating).toFixed(1)} <span style={{color:'var(--muted)'}}>({product.review_count})</span></div>}
         <div className="prod-meta">
           <span className="prod-type">{product.medium || product.category_name}</span>
-          {soldOut
+          {isAuction
+            ? <span className="prod-price">{product.current_bid ? 'Current bid' : 'Starting bid'} ₹ {Number(product.current_bid || product.starting_price || product.price).toLocaleString('en-IN')}</span>
+            : soldOut
             ? <span style={{ fontSize:'.56rem', letterSpacing:'.16em', textTransform:'uppercase', color:'#c05050', fontFamily:"'Josefin Sans',sans-serif" }}>Sold Out</span>
             : <span className="prod-price">₹ {Number(product.price).toLocaleString()}</span>
           }

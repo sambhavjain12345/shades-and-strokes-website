@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ProductsAPI, CartAPI, WishlistAPI } from '../services/api';
+import { ProductsAPI, CartAPI, WishlistAPI, readStoredArray } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../hooks/useToast';
@@ -34,7 +34,7 @@ function HomeCard({ product }) {
       try { await CartAPI.add(product.id, 1); showToast('Added to cart', 'success'); refreshCounts(); }
       catch (err) { showToast(err.message, 'error'); }
     } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart') || '[]');
+      const c = readStoredArray('ss_cart');
       if (!c.find(i => i.id === product.id))
         c.push({ id: product.id, name: product.title, price: product.price, qty: 1 });
       localStorage.setItem('ss_cart', JSON.stringify(c));
@@ -149,6 +149,7 @@ function HeroArtCard({ artwork, bg, isActive, onClick, small }) {
 /* ── Main Home component ─────────────────────────────────────── */
 export default function Home() {
   const [featured,  setFeatured]  = useState([]);
+  const [topRated,  setTopRated]  = useState([]);
   const [activeBg,  setActiveBg]  = useState(0);
   const [siteStats, setSiteStats] = useState({
     products: '...', artists: '...', orders: '...',
@@ -169,6 +170,8 @@ export default function Home() {
       })
       .catch(() => {}); // keep default '...' if API fails
   }, []);
+
+  useEffect(()=>{ProductsAPI.getAll({sort:'top_rated',limit:4}).then(d=>setTopRated((d.products||[]).filter(p=>Number(p.review_count)>0))).catch(()=>{});},[]);
 
   const heroArtworks = featured.slice(0, 3).map((p, i) => ({
     title:     p.title,
@@ -338,6 +341,8 @@ export default function Home() {
       </section>
 
       {/* ── TESTIMONIALS ──────────────────────────────────────── */}
+      {topRated.length>0&&<section style={{padding:'5rem',background:'var(--surface2)',position:'relative',zIndex:1}}><div style={{fontSize:'.58rem',letterSpacing:'.38em',textTransform:'uppercase',color:'var(--gold3)',marginBottom:'.8rem'}}>Collector Favourites</div><h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'clamp(2.2rem,3.8vw,3.4rem)',fontWeight:300,color:'var(--cream)',marginBottom:'2.5rem'}}>Top Rated <em style={{color:'var(--gold)'}}>Artworks</em></h2><div style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'1.2rem'}}>{topRated.map(product=><ProductCard key={product.id} product={product}/>)}</div></section>}
+
       <section style={{ padding:'5rem 5rem 7rem', background:'var(--surface2)', position:'relative', zIndex:1 }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'1.4rem', marginBottom:'4rem' }}>
           <div style={{ flex:1, height:'.5px', background:'linear-gradient(90deg,transparent,var(--border2))' }} />
@@ -373,7 +378,7 @@ export default function Home() {
       </section>
 
       {/* ── FEATURES ──────────────────────────────────────────── */}
-      <section style={{ padding:'5rem 5rem 7rem', background:'var(--surface)', position:'relative', zIndex:1 }}>
+      <section id="about" style={{ padding:'5rem 5rem 7rem', background:'var(--surface)', position:'relative', zIndex:1, scrollMarginTop:'88px' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'1.4rem', marginBottom:'4rem' }}>
           <div style={{ flex:1, height:'.5px', background:'linear-gradient(90deg,transparent,var(--border2))' }} />
           <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.6rem', color:'var(--gold3)', fontStyle:'italic', opacity:.6 }}>✦</span>
@@ -448,7 +453,7 @@ export default function Home() {
       </section>
 
       {/* ── FOOTER ────────────────────────────────────────────── */}
-      <footer style={{ background:'var(--surface2)', padding:'4rem 5rem 2.5rem', position:'relative', zIndex:1 }}>
+      <footer id="support" style={{ background:'var(--surface2)', padding:'4rem 5rem 2.5rem', position:'relative', zIndex:1, scrollMarginTop:'88px' }}>
         <div style={{ display:'grid', gridTemplateColumns:'1.5fr 1fr 1fr 1fr', gap:'4rem', paddingBottom:'3rem', borderBottom:'.5px solid var(--border)', marginBottom:'2.5rem' }}>
           <div>
             <Link to="/" style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:'1.3rem', fontWeight:500, letterSpacing:'.12em', color:'var(--gold)', marginBottom:'1rem', display:'block', textDecoration:'none' }}>
@@ -468,6 +473,7 @@ export default function Home() {
               { label:'Sign In',      to:'/login'    },
               { label:'My Profile',   to:'/profile'  },
               { label:'My Orders',    to:'/orders'   },
+              { label:'Won Auctions', to:'/won-auctions' },
               { label:'My Wishlist',  to:'/wishlist' },
               { label:'My Cart',      to:'/cart'     },
             ]],

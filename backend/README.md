@@ -1,7 +1,7 @@
 # 🎨 Shades & Strokes 2.0
 
 > A full-stack eCommerce platform for fine art — paintings, sketches, and sculptures.
-> Built with React-ready HTML, Node.js, Express, MySQL, and Docker.
+> Built with React 18, Vite, Node.js, Express, MySQL, and Docker.
 
 ---
 
@@ -26,16 +26,11 @@
 ```
 shades-and-strokes/
 │
-├── frontend/                        # Static HTML pages
-│   ├── shades_and_strokes_landing.html
-│   ├── shades_strokes_login.html
-│   ├── shop.html
-│   ├── product.html
-│   ├── cart.html
-│   ├── wishlist.html
-│   ├── orders.html
-│   ├── profile.html
-│   └── admin.html
+├── mern/                            # React + Vite frontend
+│   ├── src/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── vite.config.js
 │
 └── backend/
     ├── server.js                    # Express entry point
@@ -78,7 +73,7 @@ shades-and-strokes/
 
 | Layer      | Technology                          |
 |------------|-------------------------------------|
-| Frontend   | HTML5, CSS3 (custom), Vanilla JS    |
+| Frontend   | React 18, Vite, CSS3                |
 | Backend    | Node.js v20, Express v4             |
 | Database   | MySQL 8.0                           |
 | Auth       | JWT (jsonwebtoken) + bcryptjs       |
@@ -110,10 +105,7 @@ cd shades-and-strokes
 # 2. Copy env file and edit values
 cp backend/.env.example backend/.env
 
-# 3. Place all frontend HTML files in a /frontend folder
-#    (same directory as docker-compose.yml)
-
-# 4. Start everything
+# 3. Start everything (the frontend is built inside its container)
 docker compose -f backend/docker-compose.yml up --build
 
 # App is now live at:
@@ -157,6 +149,9 @@ cp .env.example .env
 # Seed sample data
 npm run db:seed
 
+# Apply schema updates to an existing database
+npm run db:migrate
+
 # Start development server (hot reload)
 npm run dev
 
@@ -168,11 +163,12 @@ API will be available at `http://localhost:5000`
 
 #### 3. Frontend
 
-Open any of the HTML files directly in a browser, or serve them with a simple static server:
+Install and run the Vite frontend:
 
 ```bash
-# From the project root
-npx serve frontend/
+cd mern
+npm install
+npm run dev
 # → http://localhost:3000
 ```
 
@@ -201,8 +197,8 @@ All protected routes require: `Authorization: Bearer <token>`
 | GET    | `/products`                 | Public         | List with filters + search|
 | GET    | `/products/:id`             | Public         | Single artwork + reviews  |
 | GET    | `/products/categories`      | Public         | All categories            |
-| POST   | `/products`                 | 🔒 Admin/Artist| Create artwork            |
-| PUT    | `/products/:id`             | 🔒 Admin/Artist| Update artwork            |
+| POST   | `/products`                 | 🔒 Admin       | Create artwork            |
+| PUT    | `/products/:id`             | 🔒 Admin       | Update artwork            |
 | DELETE | `/products/:id`             | 🔒 Admin       | Soft-delete artwork       |
 | POST   | `/products/:id/reviews`     | 🔒 Collector   | Post a review             |
 
@@ -251,6 +247,8 @@ All protected routes require: `Authorization: Bearer <token>`
 
 **Order statuses:** `pending` → `confirmed` → `packaging` → `shipped` → `delivered`
 
+Artists manage only their own inventory through `/api/artist/artworks`. Delivered orders can move through `return_requested` to `returned`.
+
 ### Admin
 
 | Method | Endpoint              | Auth      | Description                  |
@@ -294,6 +292,9 @@ reviews        → id, product_id, user_id, rating, comment
 | `JWT_SECRET`    | —                    | Yes      | JWT signing secret       |
 | `JWT_EXPIRES_IN`| `7d`                 | No       | Token expiry             |
 | `CLIENT_URL`    | `http://localhost:3000` | No    | CORS allowed origin      |
+| `CLOUDINARY_CLOUD_NAME` | —           | For uploads | Cloudinary cloud name |
+| `CLOUDINARY_API_KEY`    | —           | For uploads | Cloudinary API key    |
+| `CLOUDINARY_API_SECRET` | —           | For uploads | Cloudinary API secret |
 
 ---
 

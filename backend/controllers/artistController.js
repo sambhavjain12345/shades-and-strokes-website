@@ -1,6 +1,20 @@
 // controllers/artistController.js
 const pool             = require('../config/db');
 const { asyncHandler } = require('../middleware/error');
+const { configureAuction } = require('../utils/auctionService');
+
+// ── GET /api/artist ──────────────────────────────────────────
+exports.getPublicArtists = asyncHandler(async (req, res) => {
+  const [artists] = await pool.query(
+    `SELECT a.id, a.name, a.bio, a.location, a.avatar_url, a.website,
+            COUNT(p.id) AS product_count
+     FROM artists a
+     LEFT JOIN products p ON p.artist_id = a.id AND p.is_active = 1
+     GROUP BY a.id
+     ORDER BY a.name ASC`
+  );
+  res.json({ success: true, artists });
+});
 
 // ── Helper: get artist row for logged-in user ─────────────────
 const getArtistForUser = async (userId) => {
@@ -34,7 +48,8 @@ exports.getStats = asyncHandler(async (req, res) => {
     `SELECT COALESCE(SUM(oi.quantity), 0) AS total_sold
      FROM order_items oi
      JOIN products p ON oi.product_id = p.id
-     WHERE p.artist_id = ?`,
+     JOIN orders o ON oi.order_id = o.id
+     WHERE p.artist_id = ? AND o.status NOT IN ('cancelled', 'returned')`,
     [artist.id]
   );
   const [[{ total_revenue }]] = await pool.query(
@@ -42,7 +57,7 @@ exports.getStats = asyncHandler(async (req, res) => {
      FROM order_items oi
      JOIN products p ON oi.product_id = p.id
      JOIN orders o ON oi.order_id = o.id
-     WHERE p.artist_id = ? AND o.status != 'cancelled'`,
+     WHERE p.artist_id = ? AND o.status NOT IN ('cancelled', 'returned')`,
     [artist.id]
   );
   const [monthly] = await pool.query(
@@ -53,7 +68,7 @@ exports.getStats = asyncHandler(async (req, res) => {
      JOIN products p ON oi.product_id = p.id
      JOIN orders o ON oi.order_id = o.id
      WHERE p.artist_id = ?
-       AND o.status != 'cancelled'
+       AND o.status NOT IN ('cancelled', 'returned')
        AND o.placed_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
      GROUP BY month ORDER BY month ASC`,
     [artist.id]
@@ -77,7 +92,9 @@ exports.getArtworks = asyncHandler(async (req, res) => {
   if (!artist) return res.status(404).json({ success: false, message: 'Artist profile not found' });
 
   const { search, page = 1, limit = 20 } = req.query;
-  const offset = (Math.max(1, page) - 1) * limit;
+  const pageNumber  = Math.max(1, Number.parseInt(page, 10) || 1);
+  const limitNumber = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 20));
+  const offset = (pageNumber - 1) * limitNumber;
   let where = 'WHERE p.artist_id = ?';
   const params = [artist.id];
 
@@ -91,13 +108,18 @@ exports.getArtworks = asyncHandler(async (req, res) => {
   );
   const [artworks] = await pool.query(
     `SELECT p.*, c.name AS category_name,
-            (SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi WHERE oi.product_id = p.id) AS units_sold,
-            (SELECT COALESCE(SUM(oi.quantity * oi.unit_price),0) FROM order_items oi JOIN orders o ON oi.order_id=o.id WHERE oi.product_id=p.id AND o.status!='cancelled') AS revenue
+            au.id AS auction_id, au.starting_price AS auction_starting_price,
+            au.reserve_price, au.deposit_amount, au.payment_window_hours, au.second_chance_window_hours,
+            au.current_bid, au.minimum_increment, au.starts_at, au.ends_at,
+            au.status AS auction_status,
+            (SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON oi.order_id=o.id WHERE oi.product_id = p.id AND o.status NOT IN ('cancelled','returned')) AS units_sold,
+            (SELECT COALESCE(SUM(oi.quantity * oi.unit_price),0) FROM order_items oi JOIN orders o ON oi.order_id=o.id WHERE oi.product_id=p.id AND o.status NOT IN ('cancelled','returned')) AS revenue
      FROM products p
      JOIN categories c ON p.category_id = c.id
+     LEFT JOIN auctions au ON au.product_id = p.id
      ${where}
      ORDER BY p.created_at DESC LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
+    [...params, limitNumber, offset]
   );
 
   res.json({ success: true, total, artworks });
@@ -108,20 +130,30 @@ exports.createArtwork = asyncHandler(async (req, res) => {
   const artist = await getArtistForUser(req.user.id);
   if (!artist) return res.status(404).json({ success: false, message: 'Artist profile not found' });
 
-  const { title, description, category_id, medium, dimensions, year, price, stock = 1, tag, image_url } = req.body;
+  const { title, description, category_id, medium, dimensions, year, price, stock = 1, tag, image_url, sale_type = 'fixed' } = req.body;
   if (!title || !category_id || !price) {
     return res.status(400).json({ success: false, message: 'Title, category and price are required' });
   }
 
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now();
-  const [result] = await pool.query(
-    `INSERT INTO products (title, slug, description, artist_id, category_id, medium, dimensions, year, price, stock, tag, image_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [title, slug, description || null, artist.id, category_id, medium || null, dimensions || null, year || null, price, stock, tag || null, image_url || null]
-  );
-
-  const [rows] = await pool.query('SELECT * FROM products WHERE id = ?', [result.insertId]);
-  res.status(201).json({ success: true, product: rows[0] });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [result] = await conn.query(
+      `INSERT INTO products (title, slug, description, artist_id, category_id, medium, dimensions, year, price, stock, tag, image_url, sale_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fixed')`,
+      [title, slug, description || null, artist.id, category_id, medium || null, dimensions || null, year || null, price, stock, tag || null, image_url || null]
+    );
+    await configureAuction(conn, result.insertId, sale_type, req.body);
+    const [rows] = await conn.query('SELECT * FROM products WHERE id = ?', [result.insertId]);
+    await conn.commit();
+    res.status(201).json({ success: true, product: rows[0] });
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 });
 
 // ── PUT /api/artist/artworks/:id ──────────────────────────────
@@ -130,12 +162,6 @@ exports.updateArtwork = asyncHandler(async (req, res) => {
   if (!artist) return res.status(404).json({ success: false, message: 'Artist profile not found' });
 
   // Verify ownership
-  const [[prod]] = await pool.query(
-    'SELECT id FROM products WHERE id = ? AND artist_id = ?',
-    [req.params.id, artist.id]
-  );
-  if (!prod) return res.status(403).json({ success: false, message: 'You can only edit your own artworks' });
-
   const { title, description, category_id, medium, dimensions, year, price, stock, tag, image_url } = req.body;
   const updates = []; const values = [];
 
@@ -153,12 +179,40 @@ exports.updateArtwork = asyncHandler(async (req, res) => {
     values.push(image_url === 'CLEAR' ? null : image_url);
   }
 
-  if (!updates.length) return res.status(400).json({ success: false, message: 'Nothing to update' });
-
-  values.push(req.params.id);
-  await pool.query(`UPDATE products SET ${updates.join(',')} WHERE id = ?`, values);
-  const [rows] = await pool.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
-  res.json({ success: true, product: rows[0] });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[prod]] = await conn.query(
+      'SELECT id, sale_type FROM products WHERE id = ? AND artist_id = ? FOR UPDATE',
+      [req.params.id, artist.id]
+    );
+    if (!prod) {
+      await conn.rollback();
+      return res.status(403).json({ success: false, message: 'You can only edit your own artworks' });
+    }
+    if (updates.length) {
+      values.push(req.params.id);
+      await conn.query(`UPDATE products SET ${updates.join(',')} WHERE id = ?`, values);
+    }
+    const saleType = req.body.sale_type || prod.sale_type;
+    const hasAuctionChanges = ['sale_type', 'auction_starting_price', 'reserve_price', 'deposit_amount', 'payment_window_hours', 'second_chance_window_hours', 'minimum_increment', 'starts_at', 'ends_at']
+      .some((field) => req.body[field] !== undefined);
+    if (hasAuctionChanges) {
+      await configureAuction(conn, req.params.id, saleType, req.body);
+    }
+    if (!updates.length && !hasAuctionChanges) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: 'Nothing to update' });
+    }
+    const [rows] = await conn.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+    await conn.commit();
+    res.json({ success: true, product: rows[0] });
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 });
 
 // ── DELETE /api/artist/artworks/:id ──────────────────────────
@@ -168,10 +222,15 @@ exports.deleteArtwork = asyncHandler(async (req, res) => {
 
   // Verify ownership
   const [[prod]] = await pool.query(
-    'SELECT id FROM products WHERE id = ? AND artist_id = ?',
+    `SELECT p.id, au.current_bid, au.status AS auction_status
+     FROM products p LEFT JOIN auctions au ON au.product_id = p.id
+     WHERE p.id = ? AND p.artist_id = ?`,
     [req.params.id, artist.id]
   );
   if (!prod) return res.status(403).json({ success: false, message: 'You can only remove your own artworks' });
+  if (prod.current_bid != null && ['scheduled','active'].includes(prod.auction_status)) {
+    return res.status(409).json({ success: false, message: 'An auction with bids cannot be removed while active' });
+  }
 
   // Soft delete
   await pool.query('UPDATE products SET is_active = 0 WHERE id = ?', [req.params.id]);
@@ -184,7 +243,9 @@ exports.getSales = asyncHandler(async (req, res) => {
   if (!artist) return res.status(404).json({ success: false, message: 'Artist profile not found' });
 
   const { page = 1, limit = 15 } = req.query;
-  const offset = (Math.max(1, page) - 1) * limit;
+  const pageNumber  = Math.max(1, Number.parseInt(page, 10) || 1);
+  const limitNumber = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 15));
+  const offset = (pageNumber - 1) * limitNumber;
 
   // Get orders that contain this artist's artworks
   const [sales] = await pool.query(
@@ -202,7 +263,7 @@ exports.getSales = asyncHandler(async (req, res) => {
      WHERE p.artist_id = ?
      ORDER BY o.placed_at DESC
      LIMIT ? OFFSET ?`,
-    [artist.id, Number(limit), Number(offset)]
+    [artist.id, limitNumber, offset]
   );
 
   const [[{ total }]] = await pool.query(

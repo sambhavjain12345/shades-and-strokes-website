@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { ProductsAPI } from '../services/api';
 import ProductCard from '../components/common/ProductCard';
 
@@ -12,7 +12,7 @@ const FILTERS = [
 ];
 
 const SORTS = [
-  { label: 'Featured',        value: 'newest'     },
+  { label: 'Featured',        value: 'featured'   },
   { label: 'Price: Low–High', value: 'price_asc'  },
   { label: 'Price: High–Low', value: 'price_desc' },
   { label: 'Newest',          value: 'newest'     },
@@ -50,24 +50,24 @@ function filterFallback(list, search, category, sort) {
   }
   if (sort === 'price_asc')  result.sort((a,b) => a.price - b.price);
   if (sort === 'price_desc') result.sort((a,b) => b.price - a.price);
+  if (sort === 'featured')   result.sort((a,b) => Number(b.tag === 'Featured') - Number(a.tag === 'Featured'));
   return result;
 }
 
 export default function Shop() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
-
   const [products, setProducts] = useState([]);
   const [total,    setTotal]    = useState(0);
   const [loading,  setLoading]  = useState(true);
-  const [filter,   setFilter]   = useState(searchParams.get('category') || 'all');
-  const [sort,     setSort]     = useState('newest');
+  const [sort,     setSort]     = useState('featured');
   const [page,     setPage]     = useState(1);
   const [cols,     setCols]     = useState(3);
   const [hasMore,  setHasMore]  = useState(false);
   const [localSearch, setLocalSearch] = useState(searchParams.get('search') || '');
 
   const searchQuery = searchParams.get('search') || '';
+  const categoryQuery = searchParams.get('category') || 'all';
+  const filter = categoryQuery;
 
   const load = useCallback(async (reset = true) => {
     setLoading(true);
@@ -108,14 +108,13 @@ export default function Shop() {
   const handleSearchSubmit = () => {
     const q = localSearch.trim();
     if (q) {
-      setSearchParams({ search: q });
+      setSearchParams(filter !== 'all' ? { search: q, category: filter } : { search: q });
     } else {
-      setSearchParams({});
+      setSearchParams(filter !== 'all' ? { category: filter } : {});
     }
   };
 
   const handleFilterChange = (val) => {
-    setFilter(val);
     // Keep search param if present
     const params = {};
     if (searchQuery)   params.search   = searchQuery;

@@ -1,155 +1,65 @@
-// ── ProductDetail ─────────────────────────────────────────────
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ProductsAPI, CartAPI, WishlistAPI, getBgClass, getProductImageStyle } from '../services/api';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { AuctionsAPI, CartAPI, ProductsAPI, WishlistAPI, getBgClass, readStoredArray } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../hooks/useToast';
 
-export function ProductDetail() {
-  const { id }            = useParams();
-  const { user }          = useAuth();
-  const { refreshCounts } = useCart();
-  const { showToast }     = useToast();
-  const navigate          = useNavigate();
-  const [product, setProduct] = useState(null);
-  const [qty,     setQty]     = useState(1);
-  const [wished,  setWished]  = useState(false);
-  const [activeImg, setActiveImg] = useState(0);
-  const bg = getBgClass(Number(id));
-  const bgs = [getBgClass(Number(id)), 'bg2', 'bg3', 'bg4'];
-  const hasImage = !!product?.image_url;
+const formatMoney=value=>`₹ ${Number(value||0).toLocaleString('en-IN',{maximumFractionDigits:2})}`;
+const timeLeft=value=>{const seconds=Math.max(0,Math.floor((new Date(value).getTime()-Date.now())/1000));const days=Math.floor(seconds/86400),hours=Math.floor((seconds%86400)/3600),minutes=Math.floor((seconds%3600)/60),secs=seconds%60;return `${days?`${days}d `:''}${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;};
+const loadCashfree=()=>new Promise((resolve,reject)=>{if(window.Cashfree)return resolve(window.Cashfree);const existing=document.querySelector('script[data-cashfree-sdk]');if(existing){existing.addEventListener('load',()=>resolve(window.Cashfree),{once:true});existing.addEventListener('error',()=>reject(new Error('Unable to load Cashfree checkout')),{once:true});return;}const script=document.createElement('script');script.src='https://sdk.cashfree.com/js/v3/cashfree.js';script.async=true;script.dataset.cashfreeSdk='true';script.onload=()=>resolve(window.Cashfree);script.onerror=()=>reject(new Error('Unable to load Cashfree checkout'));document.head.appendChild(script);});
 
-  useEffect(() => {
-    ProductsAPI.getOne(id).then(d => { setProduct(d.product); })
-      .catch(() => setProduct({ id:Number(id), title:'Molten Hour', artist_name:'Arjun Sharma', price:52000, medium:'Oil on Canvas', dimensions:'90 × 120 cm', year:2024, edition:'1 of 1 (Original)', artist_bio:'Works in the tradition of expressive oil painting.', artist_location:'Mumbai, India' }));
-    if (user) WishlistAPI.check(id).then(d => setWished(d.inWishlist)).catch(()=>{});
-  }, [id, user]);
-
-  const handleCart = async () => {
-    if (user) {
-      try { await CartAPI.add(Number(id), qty); showToast('Added to cart', 'success'); refreshCounts(); }
-      catch (e) { showToast(e.message, 'error'); }
-    } else {
-      const c = JSON.parse(localStorage.getItem('ss_cart')||'[]');
-      const ex = c.find(i=>i.id===Number(id));
-      if (ex) ex.qty += qty; else c.push({ id:Number(id), name:product.title, price:product.price, qty });
-      localStorage.setItem('ss_cart', JSON.stringify(c));
-      showToast('Added to cart'); refreshCounts();
-    }
-  };
-
-  const handleWish = async () => {
-    if (!user) { showToast('Sign in to save works'); navigate('/login'); return; }
-    try {
-      if (wished) { await WishlistAPI.remove(id); setWished(false); }
-      else { await WishlistAPI.add(Number(id)); setWished(true); }
-      refreshCounts();
-    } catch (e) { showToast(e.message, 'error'); }
-  };
-
-  if (!product) return <div style={{ padding:'12rem 5rem', color:'var(--muted)', fontSize:'.7rem', letterSpacing:'.2em', textTransform:'uppercase' }}>Loading…</div>;
-
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr', padding:'7rem 5rem 6rem', gap:0, minHeight:'80vh', alignItems:'start', position:'relative', zIndex:1 }}>
-      {/* Gallery */}
-      <div style={{ position:'sticky', top:'100px' }}>
-        <div style={{ height:'520px', position:'relative', overflow:'hidden', border:'.5px solid var(--border)', marginBottom:'1px', cursor:'zoom-in' }}>
-          <div
-            className={hasImage ? '' : `prod-img-bg ${bgs[activeImg]}`}
-            style={{
-              width:'100%', height:'100%', transition:'transform 12s ease-in-out',
-              ...(hasImage ? { backgroundImage:`url(${product.image_url})`, backgroundSize:'cover', backgroundPosition:'center' } : {})
-            }}
-            onMouseEnter={e=>e.currentTarget.style.transform='scale(1.08)'}
-            onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'} />
-          <div style={{ position:'absolute', bottom:'1rem', right:'1rem', fontSize:'.5rem', letterSpacing:'.2em', textTransform:'uppercase', color:'var(--gold)', border:'.5px solid var(--border2)', padding:'.25rem .65rem', background:'rgba(8,7,6,.55)', backdropFilter:'blur(6px)' }}>Hover to Explore</div>
-        </div>
-        <div style={{ display:'flex', gap:'1px', background:'var(--border)' }}>
-          {bgs.map((bgc,i) => (
-            <div key={i} onClick={() => setActiveImg(i)} style={{ flex:1, height:'80px', cursor:'none', border:`.5px solid ${activeImg===i?'var(--gold)':'transparent'}`, overflow:'hidden', transition:'border-color .3s' }}>
-              <div
-                className={hasImage ? '' : `prod-img-bg ${bgc}`}
-                style={{ width:'100%', height:'100%', ...(hasImage && i===0 ? { backgroundImage:`url(${product.image_url})`, backgroundSize:'cover', backgroundPosition:'center' } : {}) }}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Details */}
-      <div style={{ padding:'1rem 0 1rem 4rem' }}>
-        <div className="section-label">Original Work · Authenticated</div>
-        <h1 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(2.2rem,3.5vw,3.2rem)', fontWeight:300, color:'var(--cream)', lineHeight:1.05, marginBottom:'.5rem' }}>
-          {product.title.split(' ').map((w,i)=>i===1?<em key={i} style={{fontStyle:'italic',color:'var(--gold)',fontFamily:"'IM Fell English',serif"}}>{w} </em>:<span key={i}>{w} </span>)}
-        </h1>
-        <div style={{ fontSize:'.62rem', letterSpacing:'.18em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'2rem' }}>by {product.artist_name}</div>
-        <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'2.2rem', fontWeight:300, color: product.stock === 0 ? 'var(--muted)' : 'var(--gold)', marginBottom:'.5rem' }}>
-          {product.stock === 0 ? <span style={{ textDecoration:'line-through', opacity:.6 }}>₹ {Number(product.price).toLocaleString()}</span> : `₹ ${Number(product.price).toLocaleString()}`}
-        </div>
-        <div style={{ display:'flex', alignItems:'center', gap:'.6rem', fontSize:'.56rem', letterSpacing:'.2em', textTransform:'uppercase', color: product.stock === 0 ? '#c05050' : 'var(--muted)', marginBottom:'2.5rem' }}>
-          <span style={{ width:'6px', height:'6px', background: product.stock === 0 ? '#c05050' : '#4a8c5c', borderRadius:'50%' }} />
-          {product.stock === 0 ? 'Sold Out · Not available' : `Available · ${product.stock} in stock · Ships in 48 hours`}
-        </div>
-
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:0, background:'var(--border)', marginBottom:'2.5rem' }}>
-          {[['Medium', product.medium],['Dimensions', product.dimensions||'—'],['Year', product.year||'—'],['Edition', product.edition||'1 of 1']].map(([k,v],i)=>(
-            <div key={k} style={{ background:'var(--surface2)', padding:'1rem 1.2rem', borderRight: i%2===0?'.5px solid var(--border)':'none', borderBottom: i<2?'.5px solid var(--border)':'none' }}>
-              <div style={{ fontSize:'.52rem', letterSpacing:'.22em', textTransform:'uppercase', color:'var(--muted)', marginBottom:'.3rem' }}>{k}</div>
-              <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'.95rem', color:'var(--cream)' }}>{v}</div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display:'flex', alignItems:'center', gap:'1.2rem', marginBottom:'1.5rem' }}>
-          <span style={{ fontSize:'.56rem', letterSpacing:'.24em', textTransform:'uppercase', color:'var(--muted)' }}>Quantity</span>
-          <div style={{ display:'flex', alignItems:'center', border:'.5px solid var(--border2)' }}>
-            <button onClick={() => setQty(q=>Math.max(1,q-1))} style={{ width:'34px', height:'34px', background:'none', border:'none', cursor:'none', color:'var(--muted)', fontSize:'1rem', transition:'color .3s' }}>−</button>
-            <span style={{ width:'40px', textAlign:'center', fontFamily:'Cormorant Garamond,serif', fontSize:'1rem', color:'var(--cream)', borderLeft:'.5px solid var(--border)', borderRight:'.5px solid var(--border)', padding:'.4rem 0', display:'inline-block' }}>{qty}</span>
-            <button onClick={() => setQty(q=>q+1)} style={{ width:'34px', height:'34px', background:'none', border:'none', cursor:'none', color:'var(--muted)', fontSize:'1rem', transition:'color .3s' }}>+</button>
-          </div>
-        </div>
-
-        <div style={{ display:'flex', gap:'.8rem', marginBottom:'2rem' }}>
-          {product.stock === 0 ? (
-            <button className="btn-primary" style={{ flex:1, opacity:.5, cursor:'not-allowed', background:'var(--muted2)' }} disabled>
-              Sold Out
-            </button>
-          ) : (
-            <button className="btn-primary" style={{ flex:1 }} onClick={handleCart}>Add to Cart</button>
-          )}
-          <button
-            onClick={handleWish}
-            title={wished ? 'Remove from wishlist' : 'Add to wishlist'}
-            style={{ width:'50px', height:'50px', border:`.5px solid ${wished?'var(--gold)':'var(--border2)'}`, background: wished?'rgba(201,168,76,.12)':'none', cursor:'none', display:'flex', alignItems:'center', justifyContent:'center', transition:'all .3s', flexShrink:0 }}
-            onMouseEnter={e=>{e.currentTarget.style.background='rgba(201,168,76,.15)';e.currentTarget.style.borderColor='var(--gold)';}}
-            onMouseLeave={e=>{e.currentTarget.style.background=wished?'rgba(201,168,76,.12)':'none';e.currentTarget.style.borderColor=wished?'var(--gold)':'var(--border2)';}}>
-            <svg width="16" height="16" viewBox="0 0 24 24" stroke="var(--gold)" fill={wished?'var(--gold)':'none'} strokeWidth="1.4">
-              <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>
-            </svg>
-          </button>
-        </div>
-        {wished && (
-          <div style={{ fontSize:'.56rem', letterSpacing:'.16em', textTransform:'uppercase', color:'var(--gold3)', marginBottom:'1.5rem', display:'flex', alignItems:'center', gap:'.6rem' }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--gold3)" fill="var(--gold3)" strokeWidth="1"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-            Saved to your wishlist · <button onClick={handleWish} style={{ background:'none', border:'none', cursor:'none', color:'var(--muted)', fontSize:'.56rem', letterSpacing:'.16em', textTransform:'uppercase', textDecoration:'underline', padding:0 }}>Remove</button>
-          </div>
-        )}
-
-        <div style={{ borderTop:'.5px solid var(--border)', paddingTop:'2rem', marginTop:'2rem' }}>
-          <div style={{ fontSize:'.54rem', letterSpacing:'.3em', textTransform:'uppercase', color:'var(--gold3)', marginBottom:'1.2rem' }}>About the Artist</div>
-          <div style={{ display:'flex', alignItems:'center', gap:'1.2rem', marginBottom:'1.2rem' }}>
-            <div style={{ width:'48px', height:'48px', border:'.5px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Cormorant Garamond,serif', fontSize:'1rem', color:'var(--gold)', flexShrink:0 }}>
-              {(product.artist_name||'').split(' ').map(w=>w[0]).join('').slice(0,2)}
-            </div>
-            <div>
-              <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'1.05rem', color:'var(--cream)' }}>{product.artist_name}</div>
-              <div style={{ fontSize:'.54rem', letterSpacing:'.16em', textTransform:'uppercase', color:'var(--muted)' }}>Artist · {product.artist_location||'India'}</div>
-            </div>
-          </div>
-          <p style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'.9rem', fontStyle:'italic', color:'var(--muted)', lineHeight:1.8 }}>{product.artist_bio}</p>
-        </div>
-      </div>
+function AuctionPanel({productId,user}){
+  const navigate=useNavigate();const[searchParams,setSearchParams]=useSearchParams();const{showToast}=useToast();
+  const[auction,setAuction]=useState(null);const[amount,setAmount]=useState('');const[busy,setBusy]=useState(false);const[,tick]=useState(0);
+  const load=()=>AuctionsAPI.getProduct(productId).then(data=>{setAuction(data.auction);setAmount(String(data.auction.minimum_next_bid||''));}).catch(error=>showToast(error.message,'error'));
+  useEffect(()=>{load();},[productId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{const timer=setInterval(()=>{tick(v=>v+1);if(auction&&((['scheduled','active'].includes(auction.status)&&Date.now()>=new Date(auction.ends_at).getTime())||(auction.status==='payment_pending'&&auction.payment_due_at&&Date.now()>=new Date(auction.payment_due_at).getTime())))load();},1000);return()=>clearInterval(timer);},[auction?.status,auction?.ends_at,auction?.payment_due_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{if(!auction?.id||!user||!searchParams.get('cashfree_order_id'))return;setSearchParams({}, {replace:true});setBusy(true);AuctionsAPI.verifyDeposit(auction.id).then(()=>{showToast('Deposit verified — bidding is unlocked','success');return load();}).catch(error=>showToast(error.message,'error')).finally(()=>setBusy(false));},[auction?.id,user]); // eslint-disable-line react-hooks/exhaustive-deps
+  const act=async(action,success)=>{if(!user){navigate('/login',{state:{from:`/product/${productId}`}});return;}setBusy(true);try{await action();showToast(success,'success');await load();}catch(error){showToast(error.message,'error');}finally{setBusy(false);}};
+  const payDeposit=async()=>{if(!user){navigate('/login',{state:{from:`/product/${productId}`}});return;}setBusy(true);try{const order=await AuctionsAPI.holdDeposit(auction.id);if(order.already_held){showToast('Your deposit is already verified','success');await load();return;}const Cashfree=await loadCashfree();const cashfree=Cashfree({mode:'sandbox'});await cashfree.checkout({paymentSessionId:order.payment_session_id,redirectTarget:'_modal'});await AuctionsAPI.verifyDeposit(auction.id);showToast('Deposit verified — bidding is unlocked','success');await load();}catch(error){showToast(error.message||'Deposit payment was not completed','error');}finally{setBusy(false);}};
+  if(!auction)return <div style={{color:'var(--muted)',margin:'1.5rem 0'}}>Loading auction…</div>;
+  const upcoming=auction.status==='scheduled'||Date.now()<new Date(auction.starts_at).getTime();
+  const ended=['payment_pending','sold','unsold','cancelled'].includes(auction.status)||Date.now()>=new Date(auction.ends_at).getTime();
+  const depositHeld=auction.my_deposit?.status==='HELD';
+  return <section style={{border:'.5px solid var(--border2)',padding:'1.5rem',margin:'1.5rem 0 2rem'}}>
+    <div style={{display:'flex',justifyContent:'space-between',gap:'1rem',marginBottom:'1.2rem'}}>
+      <div><div style={{fontSize:'.52rem',letterSpacing:'.25em',textTransform:'uppercase',color:'var(--gold3)'}}>{auction.current_bid?'Current Bid':'Starting Bid'}</div><div style={{fontFamily:'Cormorant Garamond,serif',fontSize:'2rem',color:'var(--cream)'}}>{formatMoney(auction.current_bid||auction.starting_price)}</div></div>
+      <div style={{textAlign:'right'}}><div style={{fontSize:'.52rem',letterSpacing:'.25em',textTransform:'uppercase',color:'var(--gold3)'}}>{ended?'Auction':upcoming?'Starts In':'Ends In'}</div><div style={{color:ended?'#c05050':'var(--cream)',marginTop:'.5rem'}}>{ended?'Ended':timeLeft(upcoming?auction.starts_at:auction.ends_at)}</div></div>
     </div>
-  );
+    {ended?<div style={{borderTop:'.5px solid var(--border)',paddingTop:'1rem',color:'var(--muted)'}}>
+      {auction.status==='unsold'?'Auction ended unsold. All eligible held deposits were refunded.':auction.status==='sold'?<><strong style={{color:'var(--gold)'}}>Auction completed</strong><div>Final sale: {formatMoney(auction.active_bid_amount||auction.winning_bid)}</div></>:auction.active_offer?.is_me?<><strong style={{color:'var(--gold)'}}>{auction.settlement_status==='SECOND_CHANCE'?`Second-chance offer — bidder #${auction.active_bidder_rank}`:'You won this auction'}</strong><div>Purchase price: {formatMoney(auction.active_bid_amount)}</div><div>Deposit: {formatMoney(auction.my_deposit?.amount)} · {auction.my_deposit?.status}</div><div>Pay before: {new Date(auction.payment_due_at).toLocaleString()} ({timeLeft(auction.payment_due_at)})</div><button className="btn-primary" style={{marginTop:'1rem'}} onClick={()=>navigate(`/checkout?auction=${auction.id}`)}>Complete Payment</button></>:auction.winner?<><strong style={{color:'var(--gold)'}}>Original winner: {auction.winner.bidder}</strong><div>Winning bid: {formatMoney(auction.winning_bid)}</div>{auction.my_candidate&&<div>Your position: bidder #{auction.my_candidate.bidder_rank} · {auction.my_candidate.status}</div>}{auction.my_deposit&&<div>Deposit: {auction.my_deposit.status}</div>}</>:'Auction is no longer active.'}
+    </div>:upcoming?<div style={{color:'var(--muted)'}}>Bidding opens {new Date(auction.starts_at).toLocaleString()}.</div>:<>
+      <div style={{fontSize:'.65rem',color:'var(--muted)',marginBottom:'.6rem'}}>Minimum next bid: <span style={{color:'var(--gold)'}}>{formatMoney(auction.minimum_next_bid)}</span></div>
+      {!depositHeld?<div style={{border:'.5px solid var(--border)',padding:'1rem'}}><div style={{color:'var(--cream)',marginBottom:'.4rem'}}>Refundable security deposit: {formatMoney(auction.deposit_amount)}</div><div style={{color:'var(--muted)',fontSize:'.65rem',lineHeight:1.6,marginBottom:'.8rem'}}>Required before bidding. Cashfree Sandbox verifies payment on the server. At auction close, only the top three bidders remain held.</div><button className="btn-primary" disabled={busy} onClick={payDeposit}>{busy?'Opening Cashfree…':user?'Pay Refundable Deposit':'Sign In to Continue'}</button></div>:<><div style={{color:'#6fa77b',fontSize:'.65rem',marginBottom:'.7rem'}}>Deposit PAID · HELD · You may bid</div><div style={{display:'flex',gap:'.7rem'}}><input aria-label="Bid amount" type="number" min={auction.minimum_next_bid} step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} style={{flex:1,background:'transparent',border:'.5px solid var(--border2)',color:'var(--cream)',padding:'.8rem'}}/><button className="btn-primary" disabled={busy} onClick={()=>act(()=>AuctionsAPI.placeBid(auction.id,amount),'Your bid was placed')}>{busy?'Placing…':'Place Bid'}</button></div></>}
+    </>}
+    <div style={{borderTop:'.5px solid var(--border)',marginTop:'1.4rem',paddingTop:'1.2rem'}}><div style={{fontSize:'.52rem',letterSpacing:'.25em',textTransform:'uppercase',color:'var(--gold3)',marginBottom:'.8rem'}}>Bid History ({auction.bid_count})</div>{auction.bids.length===0?<div style={{color:'var(--muted)',fontSize:'.7rem'}}>No bids yet.</div>:auction.bids.map(bid=><div key={bid.id} style={{display:'flex',justifyContent:'space-between',padding:'.5rem 0',borderBottom:'.5px solid var(--border)',fontSize:'.68rem',color:bid.is_mine?'var(--gold)':'var(--muted)'}}><span>{bid.is_mine?'You':bid.bidder}</span><span>{formatMoney(bid.amount)} · {new Date(bid.created_at).toLocaleString()}</span></div>)}</div>
+  </section>;
+}
+
+export function ProductDetail(){
+  const{id}=useParams();const{user}=useAuth();const{refreshCounts}=useCart();const{showToast}=useToast();const navigate=useNavigate();
+  const[product,setProduct]=useState(null);const[error,setError]=useState('');const[qty,setQty]=useState(1);const[wished,setWished]=useState(false);const[imageFailed,setImageFailed]=useState(false);
+  const[eligibility,setEligibility]=useState(null);const[rating,setRating]=useState(5);const[comment,setComment]=useState('');const[reviewBusy,setReviewBusy]=useState(false);
+  useEffect(()=>{setError('');setImageFailed(false);ProductsAPI.getOne(id).then(data=>setProduct(data.product)).catch(err=>setError(err.message));if(user)WishlistAPI.check(id).then(data=>setWished(data.inWishlist)).catch(()=>{});},[id,user]);
+  useEffect(()=>{if(user)ProductsAPI.reviewEligibility(id).then(setEligibility).catch(()=>setEligibility(null));else setEligibility(null);},[id,user]);
+  const submitReview=async()=>{setReviewBusy(true);try{await ProductsAPI.addReview(id,{rating,comment});const data=await ProductsAPI.getOne(id);setProduct(data.product);setEligibility({eligible:false,already_reviewed:true});setComment('');showToast('Thank you for reviewing this artwork','success');}catch(err){showToast(err.message,'error');}finally{setReviewBusy(false);}};
+  const handleCart=async()=>{if(user){try{await CartAPI.add(Number(id),qty);showToast('Added to cart','success');refreshCounts();}catch(err){showToast(err.message,'error');}}else{const cart=readStoredArray('ss_cart');const existing=cart.find(item=>item.id===Number(id));if(existing)existing.qty+=qty;else cart.push({id:Number(id),name:product.title,price:product.price,qty});localStorage.setItem('ss_cart',JSON.stringify(cart));refreshCounts();showToast('Added to cart');}};
+  const handleWish=async()=>{if(!user){navigate('/login');return;}try{wished?await WishlistAPI.remove(id):await WishlistAPI.add(Number(id));setWished(!wished);refreshCounts();}catch(err){showToast(err.message,'error');}};
+  if(error)return <div style={{padding:'12rem 5vw',color:'#c05050'}}>{error}</div>;if(!product)return <div style={{padding:'12rem 5vw',color:'var(--muted)'}}>Loading…</div>;
+  const isAuction=product.sale_type==='auction';
+  return <main style={{display:'grid',gridTemplateColumns:'minmax(300px,1.1fr) minmax(320px,.9fr)',gap:'clamp(2rem,6vw,7rem)',padding:'10rem 6vw 6rem',maxWidth:'1500px',margin:'0 auto'}}>
+    <div style={{minHeight:'620px',overflow:'hidden'}} className={!product.image_url||imageFailed?`prod-img-bg ${getBgClass(Number(id))}`:''}>{product.image_url&&!imageFailed&&<img src={product.image_url.trim()} alt={product.title} onError={()=>setImageFailed(true)} style={{width:'100%',height:'100%',minHeight:'620px',display:'block',objectFit:'cover',objectPosition:'center'}}/>}</div>
+    <div><div style={{fontSize:'.55rem',letterSpacing:'.28em',color:'var(--gold3)',textTransform:'uppercase'}}>{product.category_name} · {product.artist_name}</div><h1 style={{fontFamily:'Cormorant Garamond,serif',fontWeight:300,fontSize:'clamp(2.6rem,5vw,4.5rem)',color:'var(--cream)',margin:'.8rem 0'}}>{product.title}</h1>{!isAuction&&<div style={{fontFamily:'Cormorant Garamond,serif',fontSize:'1.8rem',color:'var(--gold)',marginBottom:'1.5rem'}}>{formatMoney(product.price)}</div>}<p style={{color:'var(--muted)',lineHeight:1.8}}>{product.description}</p><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'1rem',borderTop:'.5px solid var(--border)',borderBottom:'.5px solid var(--border)',padding:'1rem 0',color:'var(--muted)',fontSize:'.66rem'}}><span>{product.medium}</span><span>{product.dimensions}</span><span>{product.year}</span></div>
+      {isAuction?<AuctionPanel productId={id} user={user}/>:<><div style={{display:'flex',alignItems:'center',gap:'1rem',margin:'1.5rem 0'}}><span style={{color:'var(--muted)'}}>Quantity</span><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><span>{qty}</span><button onClick={()=>setQty(Math.min(Number(product.stock)||1,qty+1))}>+</button></div><button className="btn-primary" disabled={!Number(product.stock)} onClick={handleCart}>{Number(product.stock)?'Add to Cart':'Sold Out'}</button></>}
+      <button onClick={handleWish} style={{marginLeft:'.8rem',padding:'.8rem 1rem',color:'var(--gold)',background:'transparent',border:'.5px solid var(--border2)'}}>{wished?'Saved ♥':'Save ♡'}</button><div style={{borderTop:'.5px solid var(--border)',marginTop:'2rem',paddingTop:'1.5rem'}}><div style={{color:'var(--gold3)',fontSize:'.55rem',letterSpacing:'.25em',textTransform:'uppercase'}}>About the Artist</div><h3 style={{color:'var(--cream)',fontFamily:'Cormorant Garamond,serif'}}>{product.artist_name}</h3><p style={{color:'var(--muted)',lineHeight:1.8}}>{product.artist_bio}</p></div>
+      <section style={{borderTop:'.5px solid var(--border)',marginTop:'2rem',paddingTop:'1.5rem'}}>
+        <div style={{color:'var(--gold3)',fontSize:'.55rem',letterSpacing:'.25em',textTransform:'uppercase'}}>Collector Reviews</div>
+        <div style={{color:'var(--gold)',marginTop:'.7rem'}}>{Number(product.review_count)?`★ ${Number(product.avg_rating).toFixed(1)} · ${product.review_count} review${Number(product.review_count)===1?'':'s'}`:'Not yet rated'}</div>
+        {eligibility?.eligible&&<div style={{border:'.5px solid var(--border)',padding:'1rem',marginTop:'1rem'}}><div style={{display:'flex',gap:'.35rem',marginBottom:'.8rem'}}>{[1,2,3,4,5].map(star=><button key={star} aria-label={`${star} stars`} onClick={()=>setRating(star)} style={{background:'none',border:0,color:star<=rating?'var(--gold)':'var(--muted)',fontSize:'1.4rem'}}>★</button>)}</div><textarea rows="3" maxLength="1000" value={comment} onChange={e=>setComment(e.target.value)} placeholder="Share your experience with this artwork" style={{width:'100%',boxSizing:'border-box',background:'transparent',border:'.5px solid var(--border2)',color:'var(--cream)',padding:'.8rem'}}/><button className="btn-primary" disabled={reviewBusy} onClick={submitReview} style={{marginTop:'.8rem'}}>{reviewBusy?'Publishing…':'Publish Review'}</button></div>}
+        {user&&eligibility?.requires_delivered_purchase&&<p style={{color:'var(--muted)',fontSize:'.65rem'}}>Reviews unlock after your paid order is delivered.</p>}{eligibility?.already_reviewed&&<p style={{color:'var(--muted)',fontSize:'.65rem'}}>You have reviewed this artwork.</p>}
+        <div style={{marginTop:'1rem'}}>{(product.reviews||[]).map(review=><article key={review.id} style={{borderBottom:'.5px solid var(--border)',padding:'1rem 0'}}><div style={{display:'flex',justifyContent:'space-between'}}><strong style={{color:'var(--cream)'}}>{review.reviewer_name}</strong><span style={{color:'var(--gold)'}}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</span></div>{review.comment&&<p style={{color:'var(--muted)',lineHeight:1.7}}>{review.comment}</p>}<small style={{color:'var(--muted2)'}}>{new Date(review.created_at).toLocaleDateString()}</small></article>)}{!product.reviews?.length&&<p style={{color:'var(--muted)'}}>No reviews yet.</p>}</div>
+      </section>
+    </div>
+  </main>;
 }

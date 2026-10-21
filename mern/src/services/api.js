@@ -1,4 +1,19 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
+
+export function readStoredJSON(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value ?? fallback;
+  } catch {
+    localStorage.removeItem(key);
+    return fallback;
+  }
+}
+
+export function readStoredArray(key) {
+  const value = readStoredJSON(key, []);
+  return Array.isArray(value) ? value : [];
+}
 
 // ── Core fetch ────────────────────────────────────────────────
 async function apiFetch(endpoint, options = {}) {
@@ -7,14 +22,25 @@ async function apiFetch(endpoint, options = {}) {
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-  const data = await res.json();
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = { message: res.statusText || 'The server returned an invalid response' };
+    }
+  }
 
   if (!res.ok) {
     if (res.status === 401) {
       localStorage.removeItem('ss_token');
       localStorage.removeItem('ss_user');
-      window.location.href = '/login';
-      return;
+      // A failed sign-in is an expected form error. Only force navigation when
+      // an existing session has actually expired.
+      if (token && !endpoint.startsWith('/auth/login')) {
+        window.location.assign('/login');
+      }
     }
     throw new Error(data.message || `API error ${res.status}`);
   }
@@ -23,6 +49,7 @@ async function apiFetch(endpoint, options = {}) {
 
 // ── Auth ──────────────────────────────────────────────────────
 export const AuthAPI = {
+  getGoogleConfig:   ()    => apiFetch('/auth/google/config'),
   async login(email, password) {
     const data = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     localStorage.setItem('ss_token', data.token);
@@ -31,6 +58,12 @@ export const AuthAPI = {
   },
   async register(name, email, password) {
     const data = await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) });
+    localStorage.setItem('ss_token', data.token);
+    localStorage.setItem('ss_user', JSON.stringify(data.user));
+    return data;
+  },
+  async googleLogin(credential) {
+    const data = await apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ credential }) });
     localStorage.setItem('ss_token', data.token);
     localStorage.setItem('ss_user', JSON.stringify(data.user));
     return data;
@@ -53,6 +86,7 @@ export const ProductsAPI = {
   getOne:       (id)      => apiFetch(`/products/${id}`),
   getCategories:()        => apiFetch('/products/categories'),
   addReview:    (id, b)   => apiFetch(`/products/${id}/reviews`, { method: 'POST', body: JSON.stringify(b) }),
+  reviewEligibility:(id)  => apiFetch(`/products/${id}/review-eligibility`),
   create:       (b)       => apiFetch('/products', { method: 'POST', body: JSON.stringify(b) }),
   update:       (id, b)   => apiFetch(`/products/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
   remove:       (id)      => apiFetch(`/products/${id}`, { method: 'DELETE' }),
@@ -82,7 +116,8 @@ export const OrdersAPI = {
     return apiFetch(`/orders${q ? '?' + q : ''}`);
   },
   getOne:        (id)               => apiFetch(`/orders/${id}`),
-  place:         (b)                => apiFetch('/orders', { method: 'POST', body: JSON.stringify(b) }),
+  startPayment:  (b)                => apiFetch('/orders/payment/start', { method:'POST', body:JSON.stringify(b) }),
+  verifyPayment: (cashfree_order_id) => apiFetch('/orders/payment/verify', { method:'POST', body:JSON.stringify({cashfree_order_id}) }),
   updateStatus:  (id, status, desc) => apiFetch(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, description: desc }) }),
   cancel:        (id)               => apiFetch(`/orders/${id}`, { method: 'DELETE' }),
   requestReturn: (id, reason)       => apiFetch(`/orders/${id}/return`, { method: 'POST', body: JSON.stringify({ reason }) }),
@@ -115,6 +150,7 @@ export const AdminAPI = {
 
 // ── Artist Portal API ─────────────────────────────────────────
 export const ArtistAPI = {
+  getPublic:     ()       => apiFetch('/artist'),
   getMe:         ()       => apiFetch('/artist/me'),
   getStats:      ()       => apiFetch('/artist/stats'),
   getArtworks:   (p={})   => apiFetch(`/artist/artworks?${new URLSearchParams(p)}`),
@@ -122,6 +158,18 @@ export const ArtistAPI = {
   updateArtwork: (id, b)  => apiFetch(`/artist/artworks/${id}`, { method:'PUT', body:JSON.stringify(b) }),
   deleteArtwork: (id)     => apiFetch(`/artist/artworks/${id}`, { method:'DELETE' }),
   getSales:      (p={})   => apiFetch(`/artist/sales?${new URLSearchParams(p)}`),
+};
+
+export const AuctionsAPI = {
+  getActive:  ()           => apiFetch('/auctions'),
+  getWon:     ()           => apiFetch('/auctions/won'),
+  getProduct: (productId)  => apiFetch(`/auctions/product/${productId}`),
+  holdDeposit:(id)         => apiFetch(`/auctions/${id}/deposit`, { method:'POST' }),
+  verifyDeposit:(id)       => apiFetch(`/auctions/${id}/deposit/verify`, { method:'POST' }),
+  placeBid:   (id, amount) => apiFetch(`/auctions/${id}/bids`, { method:'POST', body:JSON.stringify({ amount }) }),
+  startPayment:(id, body)   => apiFetch(`/auctions/${id}/payment/start`, { method:'POST', body:JSON.stringify(body) }),
+  verifyPayment:(id, cashfree_order_id) => apiFetch(`/auctions/${id}/payment/verify`, { method:'POST', body:JSON.stringify({cashfree_order_id}) }),
+  decline:    (id)         => apiFetch(`/auctions/${id}/decline`, { method:'POST' }),
 };
 
 // ── Helpers ───────────────────────────────────────────────────

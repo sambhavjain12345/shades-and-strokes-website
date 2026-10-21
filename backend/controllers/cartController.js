@@ -22,14 +22,18 @@ exports.getCart = asyncHandler(async (req, res) => {
 // ── POST /api/cart ───────────────────────────────────────────
 exports.addToCart = asyncHandler(async (req, res) => {
   const { product_id, quantity = 1 } = req.body;
+  const requestedQty = Number(quantity);
 
   // Check product exists and has stock
   const [[prod]] = await pool.query(
-    'SELECT id, stock FROM products WHERE id = ? AND is_active = 1',
+    'SELECT id, stock, sale_type FROM products WHERE id = ? AND is_active = 1',
     [product_id]
   );
   if (!prod) {
     return res.status(404).json({ success: false, message: 'Artwork not found' });
+  }
+  if (prod.sale_type === 'auction') {
+    return res.status(400).json({ success: false, message: 'Auction artworks cannot be added to the cart' });
   }
   if (prod.stock < 1) {
     return res.status(400).json({ success: false, message: 'This artwork is sold out' });
@@ -42,7 +46,7 @@ exports.addToCart = asyncHandler(async (req, res) => {
   );
 
   const currentQty = existing ? existing.quantity : 0;
-  const newTotal   = currentQty + quantity;
+  const newTotal   = currentQty + requestedQty;
 
   // Don't allow adding more than available stock
   if (newTotal > prod.stock) {
@@ -59,7 +63,7 @@ exports.addToCart = asyncHandler(async (req, res) => {
     `INSERT INTO cart_items (user_id, product_id, quantity)
      VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-    [req.user.id, product_id, quantity]
+    [req.user.id, product_id, requestedQty]
   );
 
   // Return updated cart
@@ -76,7 +80,8 @@ exports.addToCart = asyncHandler(async (req, res) => {
 // ── PUT /api/cart/:id ────────────────────────────────────────
 exports.updateCartItem = asyncHandler(async (req, res) => {
   const { quantity } = req.body;
-  if (!quantity || quantity < 1) {
+  const requestedQty = Number(quantity);
+  if (!Number.isInteger(requestedQty) || requestedQty < 1) {
     return res.status(400).json({ success: false, message: 'Quantity must be at least 1' });
   }
 
@@ -93,14 +98,14 @@ exports.updateCartItem = asyncHandler(async (req, res) => {
   }
 
   // Cap quantity at available stock
-  if (quantity > item.stock) {
+  if (requestedQty > item.stock) {
     return res.status(400).json({
       success: false,
       message: `Only ${item.stock} of this artwork available`,
     });
   }
 
-  await pool.query('UPDATE cart_items SET quantity = ? WHERE id = ?', [quantity, req.params.id]);
+  await pool.query('UPDATE cart_items SET quantity = ? WHERE id = ?', [requestedQty, req.params.id]);
   res.json({ success: true, message: 'Cart updated' });
 });
 

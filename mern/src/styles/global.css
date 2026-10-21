@@ -244,7 +244,9 @@ body:has(button:hover) .cursor-ring { width: 52px; height: 52px; border-color: v
 .prod-card { background: var(--surface2); position: relative; overflow: hidden; cursor: none; }
 .prod-img { position: relative; overflow: hidden; }
 .prod-img-bg { width: 100%; height: 100%; transition: transform 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+.product-image { width: 100%; height: 100%; display: block; object-fit: cover; object-position: center; transition: transform 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
 .prod-card:hover .prod-img-bg { transform: scale(1.07); }
+.prod-card:hover .product-image { transform: scale(1.07); }
 .prod-tag {
   position: absolute; top: 1rem; left: 1rem; z-index: 3;
   font-size: 0.5rem; letter-spacing: 0.22em; text-transform: uppercase;

@@ -38,7 +38,8 @@ export default function Navbar() {
         <NavLink to="/shop" end className={({ isActive }) => isActive ? 'active' : ''}>Gallery</NavLink>
         <NavLink to="/shop?category=paintings" className={({ isActive }) => isActive ? 'active' : ''}>Collections</NavLink>
         <NavLink to="/artists" className={({ isActive }) => isActive ? 'active' : ''}>Artists</NavLink>
-        <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>About</NavLink>
+        <NavLink to="/auctions" className={({ isActive }) => isActive ? 'active' : ''}>Auctions</NavLink>
+        <a href="/#about">About</a>
       </div>
 
       <div className="nav-right">
@@ -87,12 +88,12 @@ export default function Navbar() {
               </a>
             )}
             {user.role === 'artist' && (
-              <a href="/studio"
+              <Link to="/studio"
                 style={{ fontSize:'.58rem', letterSpacing:'.2em', textTransform:'uppercase', color:'var(--gold3)', textDecoration:'none', border:'.5px solid var(--border2)', padding:'.5rem 1rem', transition:'all .3s' }}
                 onMouseEnter={e=>{e.currentTarget.style.color='var(--gold)';e.currentTarget.style.borderColor='var(--gold)';}}
                 onMouseLeave={e=>{e.currentTarget.style.color='var(--gold3)';e.currentTarget.style.borderColor='var(--border2)';}}>
                 My Studio
-              </a>
+              </Link>
             )}
             <Link to="/profile" className="nav-cta">{user.name.split(' ')[0]}</Link>
           </div>

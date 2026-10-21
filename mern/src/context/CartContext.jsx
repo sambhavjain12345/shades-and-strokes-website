@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { CartAPI, WishlistAPI } from '../services/api';
+import { CartAPI, WishlistAPI, readStoredArray } from '../services/api';
 import { useAuth } from './AuthContext';
 
 const CartContext = createContext(null);
@@ -17,8 +17,8 @@ export function CartProvider({ children }) {
         setWishCount(wish.items.length);
       } catch (_) {}
     } else {
-      const local = JSON.parse(localStorage.getItem('ss_cart') || '[]');
-      const wish  = JSON.parse(localStorage.getItem('ss_wish')  || '[]');
+      const local = readStoredArray('ss_cart');
+      const wish  = readStoredArray('ss_wish');
       setCartCount(local.reduce((s, i) => s + (i.qty || 1), 0));
       setWishCount(wish.length);
     }

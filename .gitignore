@@ -1,0 +1,9 @@
+**/node_modules/
+**/dist/
+**/.env
+**/.env.local
+backend/uploads/
+project-backups/
+*.log
+.DS_Store
+.vercel/

@@ -14,6 +14,7 @@ const authRoutes    = require('./routes/auth');
 const productRoutes = require('./routes/products');
 const artistRoutes  = require('./routes/artist');
 const uploadRoutes  = require('./routes/upload');
+const auctionRoutes = require('./routes/auctions');
 const { cartRouter, wishRouter, orderRouter, adminRouter } = require('./routes/index');
 const { errorHandler } = require('./middleware/error');
 
@@ -33,7 +34,12 @@ process.on('unhandledRejection', (reason) => {
 app.set('trust proxy', 1);
 
 // ── Security ──────────────────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  // The Vite frontend runs on :3000 while uploaded assets are served by the
+  // API on :5000 in development. Permit those public artwork files to render.
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 // ── CORS ─────────────────────────────────────────────────────
 const allowedOrigins = [
@@ -41,13 +47,12 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
   process.env.CLIENT_URL,
+  ...(process.env.CLIENT_URLS || '').split(',').map(value=>value.trim()),
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (origin.endsWith('.vercel.app'))  return cb(null, true);
-    if (origin.endsWith('.railway.app')) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
     cb(new Error(`CORS blocked: ${origin}`));
   },
@@ -68,9 +73,10 @@ const authLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/auth/login',    authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/google',   authLimiter);
 
 // ── Body parsing ──────────────────────────────────────────────
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '10kb', verify:(req,res,buffer)=>{ req.rawBody=buffer.toString('utf8'); } }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Logging ───────────────────────────────────────────────────
@@ -93,6 +99,7 @@ app.use('/api/auth',     authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/artist',   artistRoutes);
 app.use('/api/upload',   uploadRoutes);   // ← Cloudinary image upload
+app.use('/api/auctions', auctionRoutes);
 app.use('/api/cart',     cartRouter);
 app.use('/api/wishlist', wishRouter);
 app.use('/api/orders',   orderRouter);
@@ -102,8 +109,11 @@ app.use('/api/admin',    adminRouter);
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '../mern/dist');
   app.use(express.static(distPath));
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) res.sendFile(path.join(distPath, 'index.html'));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(distPath, 'index.html'), (err) => {
+      if (err) next(err);
+    });
   });
 }
 
@@ -116,7 +126,7 @@ app.use('/api/*', (req, res) => {
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log('\n══════════════════════════════════════════════');
   console.log(`  🎨  Shades & Strokes API`);
   console.log(`  🚀  Running on  http://localhost:${PORT}`);
@@ -124,5 +134,16 @@ app.listen(PORT, () => {
   console.log(`  📡  API base:    http://localhost:${PORT}/api`);
   console.log('══════════════════════════════════════════════\n');
 });
+
+// Lazy endpoint finalization is backed by a lightweight sweep so auctions are
+// marked ended even when no collector has the page open at the deadline.
+const auctionSweep = setInterval(() => {
+  require('./utils/auctionService').finalizeExpiredAuctions().catch(err => {
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Auction finalization sweep failed:', err.message);
+    }
+  });
+}, 30_000);
+auctionSweep.unref();
 
 module.exports = app;

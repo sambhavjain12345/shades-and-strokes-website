@@ -118,11 +118,9 @@ Every page that fetches from the API has a `.catch()` fallback with hardcoded da
 
 ---
 
-## Backend Changes
+## Backend integration
 
-The only change to the backend is in `server.js`:
-- CORS now also allows `localhost:5173` (Vite dev) and `localhost:4173` (Vite preview)
-- In production mode, the backend serves the React `dist/` folder as static files
-- A catch-all route returns `index.html` for React Router's client-side navigation
-
-No database schema changes. No new API routes. Everything else is identical.
+The Express backend provides authentication, products, carts, wishlists, orders,
+admin management, artist-owned inventory, image uploads, and the public artist
+directory. Existing databases should run `npm run db:migrate` from `backend/`
+to add the current order-return statuses.
