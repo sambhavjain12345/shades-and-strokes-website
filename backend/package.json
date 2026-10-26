@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "start:production": "node utils/initDB.js && node utils/migrate.js && node server.js",
+    "start:production": "node server.js",
+    "db:prepare": "node utils/initDB.js && node utils/migrate.js",
     "dev": "nodemon server.js",
     "db:init": "node utils/initDB.js",
     "db:seed": "node utils/seedDB.js",

@@ -6,7 +6,7 @@ services:
     rootDir: backend
     buildCommand: npm ci
     startCommand: npm run start:production
-    healthCheckPath: /api/health
+    healthCheckPath: /api/health/live
     envVars:
       - key: NODE_ENV
         value: production
@@ -16,6 +16,12 @@ services:
         value: "true"
       - key: DB_SSL_REJECT_UNAUTHORIZED
         value: "true"
+      - key: DB_CONNECT_TIMEOUT_MS
+        value: "10000"
+      - key: DB_HEALTH_TIMEOUT_MS
+        value: "5000"
+      - key: DB_RECONNECT_INTERVAL_MS
+        value: "60000"
       - key: UPLOAD_PROVIDER
         value: cloudinary
       - key: CASHFREE_BASE_URL

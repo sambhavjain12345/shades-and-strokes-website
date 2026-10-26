@@ -9,6 +9,7 @@ const helmet      = require('helmet');
 const morgan      = require('morgan');
 const rateLimit   = require('express-rate-limit');
 const path        = require('path');
+const pool        = require('./config/db');
 
 const authRoutes    = require('./routes/auth');
 const productRoutes = require('./routes/products');
@@ -86,12 +87,24 @@ if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Health check ──────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  res.json({
-    success: true, message: 'Shades & Strokes API is running',
-    version: '2.0.0', env: process.env.NODE_ENV,
+app.get('/api/health/live', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ success:true, status:'ok', timestamp:new Date().toISOString() });
+});
+
+// Readiness endpoint for Render monitors and external uptime checks. It runs a
+// harmless SELECT 1 through the real pool and intentionally exposes no host,
+// user, database name, error message, or credentials.
+app.get('/api/health', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const databaseAvailable = await pool.checkDatabase();
+  const payload = {
+    success: databaseAvailable,
+    status: databaseAvailable ? 'ok' : 'degraded',
+    database: databaseAvailable ? 'reachable' : 'unavailable',
     timestamp: new Date().toISOString(),
-  });
+  };
+  return res.status(databaseAvailable ? 200 : 503).json(payload);
 });
 
 // ── API Routes ────────────────────────────────────────────────
@@ -145,5 +158,12 @@ const auctionSweep = setInterval(() => {
   });
 }, 30_000);
 auctionSweep.unref();
+
+// Keep retrying after a provider restart. No application data is changed by
+// this probe; mysql2 replaces broken pooled connections lazily.
+const databaseProbe = setInterval(() => {
+  pool.checkDatabase().catch(() => {});
+}, Number(process.env.DB_RECONNECT_INTERVAL_MS || 60_000));
+databaseProbe.unref();
 
 module.exports = app;

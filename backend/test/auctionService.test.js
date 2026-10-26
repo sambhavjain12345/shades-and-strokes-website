@@ -9,6 +9,13 @@ const {
   validateAuctionConfig,
 } = require('../utils/auctionService');
 const { maskBidderName } = require('../controllers/auctionController');
+const { isTransientDatabaseError } = require('../middleware/error');
+
+test('transient database errors are safely identified for retry responses', () => {
+  assert.equal(isTransientDatabaseError({ code:'ENOTFOUND' }), true);
+  assert.equal(isTransientDatabaseError({ code:'PROTOCOL_CONNECTION_LOST' }), true);
+  assert.equal(isTransientDatabaseError({ code:'ER_ACCESS_DENIED_ERROR' }), false);
+});
 
 test('moneyToCents accepts valid money and rejects non-positive values', () => {
   assert.equal(moneyToCents('123.45'), 12345);

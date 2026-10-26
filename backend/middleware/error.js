@@ -1,4 +1,12 @@
 // Central error handler — always returns JSON
+const transientDatabaseCodes = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT',
+  'PROTOCOL_CONNECTION_LOST', 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+  'ER_CON_COUNT_ERROR', 'DB_HEALTH_TIMEOUT',
+]);
+
+const isTransientDatabaseError = (err = {}) => transientDatabaseCodes.has(err.code);
+
 const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message    = err.message    || 'Internal Server Error';
@@ -13,6 +21,14 @@ const errorHandler = (err, req, res, next) => {
   if (err.code === 'ER_NO_REFERENCED_ROW_2') {
     statusCode = 400;
     message    = 'Referenced record does not exist';
+  }
+
+  // Aiven/Render network interruptions can recover. Keep the process alive
+  // and never reveal provider, host, or credential details to clients.
+  if (isTransientDatabaseError(err)) {
+    statusCode = 503;
+    message = 'Service temporarily unavailable. Please try again shortly.';
+    console.warn(`[DB] transient request failure (${err.code})`);
   }
 
   // JWT errors
@@ -40,4 +56,4 @@ const errorHandler = (err, req, res, next) => {
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
-module.exports = { errorHandler, asyncHandler };
+module.exports = { errorHandler, asyncHandler, isTransientDatabaseError };
