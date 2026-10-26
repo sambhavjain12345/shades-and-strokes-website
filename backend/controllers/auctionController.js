@@ -5,6 +5,17 @@ const {advanceSettlementLocked,finalizeExpiredAuctions,finalizeLockedAuction,min
 const cashfree=require('../utils/cashfreeService');
 const crypto=require('crypto');
 
+// Cashfree checkout sessions should not be reused indefinitely. A bidder can
+// abandon a popup or Cashfree can invalidate a session while our deposit row
+// remains PENDING. Reuse only a recently-created session; a later click gets a
+// fresh Cashfree order and cannot remain trapped on an expired checkout.
+const CASHFREE_SESSION_REUSE_MS=20*60*1000;
+const hasReusableDepositSession=deposit=>{
+  if(!deposit?.payment_session_id||deposit.payment_status!=='PENDING'||!deposit.updated_at)return false;
+  const updatedAt=new Date(deposit.updated_at).getTime();
+  return Number.isFinite(updatedAt)&&(Date.now()-updatedAt)<CASHFREE_SESSION_REUSE_MS;
+};
+
 const maskBidderName=(name='Bidder')=>{
   const parts=name.trim().split(/\s+/).filter(Boolean);
   return `${parts[0]?.[0]?.toUpperCase()||'B'}•••${parts.length>1?` ${parts.at(-1)[0].toUpperCase()}.`:''}`;
@@ -88,7 +99,7 @@ exports.holdDeposit=asyncHandler(async(req,res)=>{
     if(!auction.customer_phone||String(auction.customer_phone).replace(/\D/g,'').length<10){await conn.rollback();return res.status(422).json({success:false,message:'Add a valid phone number to your profile before paying the deposit'});}
     let [[deposit]]=await conn.query('SELECT * FROM auction_deposits WHERE auction_id=? AND user_id=? FOR UPDATE',[auction.id,req.user.id]);
     if(deposit?.status==='HELD'&&deposit.payment_status==='SUCCESS'){await conn.commit();return res.json({success:true,already_held:true,deposit});}
-    if(deposit?.payment_session_id&&deposit.payment_status==='PENDING'){
+    if(hasReusableDepositSession(deposit)){
       await conn.commit();return res.json({success:true,payment_session_id:deposit.payment_session_id,cashfree_order_id:deposit.cashfree_order_id,deposit});
     }
     if(!deposit){
